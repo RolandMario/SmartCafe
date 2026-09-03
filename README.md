@@ -81,11 +81,11 @@ Seeded accounts:
 ```bash
 cd mobile
 npm install
-cp .env.example .env     # optional; auto-detects host from the Expo dev server
+cp .env.example .env     # defaults to the hosted backend (https://smart-cafe-bay.vercel.app/api)
 npx expo start           # then press i / a / w
 ```
 
-- On a **physical device**, set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:4000/api` in `.env`.
+- The app ships pointing at the **hosted backend** (`EXPO_PUBLIC_API_URL`). To run against a local backend instead, set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:4000/api` in `mobile/.env` and restart `expo start`.
 - Demo credentials above; fund the wallet via admin, or any wallet-top-up.
 
 ### 4. Admin (Next.js)
@@ -93,7 +93,7 @@ npx expo start           # then press i / a / w
 ```bash
 cd admin
 npm install
-cp .env.example .env.local
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL defaults to the hosted backend
 npm run dev              # http://localhost:3000  (login with admin@vtuapp.com)
 ```
 
