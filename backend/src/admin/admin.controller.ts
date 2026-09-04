@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -16,11 +17,13 @@ import { WalletService } from '../wallet/wallet.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role, ServiceType } from '../common/enums';
+import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { QueryTransactionsDto } from '../transactions/dto/transactions.dto';
 import { SearchPaginationDto } from '../common/dto/pagination.dto';
 import { CreateCatalogItemDto, QueryCatalogDto, UpdateCatalogItemDto } from '../catalog/dto/catalog.dto';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsNumber,
@@ -30,6 +33,8 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorService } from '../vendors/vendor.service';
+import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
+import { PaymentProvider } from '../payments/payment-gateway.interface';
 
 class CreditWalletDto {
   @ApiProperty({ minimum: 1 })
@@ -64,6 +69,12 @@ class UpdateVendorDto {
   provider: string;
 }
 
+class UpdatePaymentGatewayDto {
+  @ApiProperty({ description: 'Enable or disable the gateway for wallet funding' })
+  @IsBoolean()
+  enabled: boolean;
+}
+
 @ApiTags('admin')
 @Roles(Role.ADMIN)
 @Controller('admin')
@@ -75,6 +86,7 @@ export class AdminController {
     private readonly walletService: WalletService,
     private readonly catalogService: CatalogService,
     private readonly vendorService: VendorService,
+    private readonly paymentGatewayRegistry: PaymentGatewayRegistry,
   ) {}
 
   @Get('dashboard')
@@ -100,6 +112,39 @@ export class AdminController {
   @ApiOperation({ summary: 'Set the vendor provider for a service' })
   updateVendor(@Body() dto: UpdateVendorDto) {
     return this.vendorService.setProvider(dto.service, dto.provider);
+  }
+
+  // ---------------- Payment gateways (wallet funding) ----------------
+  @Get('payment-gateways')
+  @ApiOperation({
+    summary:
+      'List payment gateways with their config + admin-enabled state for wallet funding',
+  })
+  paymentGateways() {
+    return this.paymentGatewayRegistry.overview();
+  }
+
+  @Patch('payment-gateways/:provider')
+  @ApiOperation({
+    summary:
+      'Enable or disable a payment gateway for new wallet funding requests',
+  })
+  updatePaymentGateway(
+    @CurrentUser() user: AuthUser,
+    @Param('provider') providerParam: string,
+    @Body() dto: UpdatePaymentGatewayDto,
+  ) {
+    const provider = String(providerParam).toLowerCase();
+    if (provider !== 'monnify' && provider !== 'paystack') {
+      throw new BadRequestException(
+        `Unknown payment gateway: ${providerParam} (expected monnify or paystack)`,
+      );
+    }
+    return this.paymentGatewayRegistry.setEnabled(
+      provider as PaymentProvider,
+      dto.enabled,
+      user.userId,
+    );
   }
 
   // ---------------- Transactions ----------------

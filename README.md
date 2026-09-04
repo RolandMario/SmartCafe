@@ -175,6 +175,29 @@ that gateway is configured. Otherwise the first configured gateway is used
 (Monnify → Paystack). If no gateway is configured, deposits fall back to the
 manual admin-approval flow, which is unchanged.
 
+### Admin control: enabling / disabling gateways
+
+The platform admin can switch each payment gateway on or off from the admin
+dashboard (**Payments** page), without a deploy or a restart:
+
+- `GET /admin/payment-gateways` — per-gateway `{ provider, label, configured,
+  enabled, active }`.
+- `PATCH /admin/payment-gateways/:provider` with `{ enabled: boolean }` —
+  persists the toggle and applies it immediately (RBAC: admin only).
+
+A gateway is **active** for new wallet funding only when it is both:
+
+1. **configured** — env credentials are present (adapter `isConfigured()`), and
+2. **enabled** — the toggle above is on. Gateways with no saved row default to
+   enabled, so existing deployments keep working unchanged.
+
+When a gateway is disabled (or not configured) it disappears from the mobile
+app's Fund Wallet screen, and `POST /funding/deposit` skips it even if explicitly
+requested. Users can also fetch the currently active gateways with
+`GET /funding/gateways`. Verification and webhook settlement for checkouts that
+were already started remain unaffected by toggles, so no in-flight payment is
+ever lost.
+
 Related endpoints: `GET /funding/payment/:reference` (verify + credit),
 `POST /funding/webhook/monnify` + `POST /funding/webhook/paystack` (signed
 webhooks), `GET /funding/webhook/monnify/callback` +
@@ -205,9 +228,10 @@ webhooks), `GET /funding/webhook/monnify/callback` +
 - `GET /catalog`, `GET /catalog/services`
 - `POST /airtime/purchase`, `/data/purchase`, `/cable/verify|purchase`,
   `/electricity/verify|purchase`, `/waec/purchase`, `/sms/quote|purchase`
-- `GET /wallet`, `/wallet/ledger`, `POST /funding/deposit`
+- `GET /wallet`, `/wallet/ledger`, `POST /funding/deposit`, `GET /funding/gateways`
 - `GET|POST /transactions...` (history, detail, requery)
 - `/admin/dashboard|transactions|users|catalog`, `/admin/vendors` (per-service provider routing), `/admin/vendors/balance`,
+  `/admin/payment-gateways` (enable/disable wallet-funding gateways),
   `/funding/admin/*` (RBAC admin-only)
 
 ## Tests

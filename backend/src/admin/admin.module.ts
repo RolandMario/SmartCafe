@@ -8,6 +8,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { CatalogModule } from '../catalog/catalog.module';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { CatalogModule } from '../catalog/catalog.module';
     UsersModule,
     WalletModule,
     CatalogModule,
+    PaymentsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

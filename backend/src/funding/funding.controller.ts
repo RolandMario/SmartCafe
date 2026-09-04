@@ -12,6 +12,7 @@ import {
 import { Request, Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FundingService } from './funding.service';
+import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
 import { AdminApproveDto, DepositDto, QueryFundingDto } from './dto/funding.dto';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -24,7 +25,23 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 export class FundingController {
   private readonly logger = new Logger(FundingController.name);
 
-  constructor(private readonly fundingService: FundingService) {}
+  constructor(
+    private readonly fundingService: FundingService,
+    private readonly gatewayRegistry: PaymentGatewayRegistry,
+  ) {}
+
+  @Get('gateways')
+  @ApiOperation({
+    summary:
+      'Payment gateways currently active for wallet funding (configured + admin-enabled)',
+  })
+  gateways() {
+    return {
+      gateways: this.gatewayRegistry.all()
+        .filter((g) => this.gatewayRegistry.isActive(g))
+        .map((g) => ({ provider: g.name, label: g.label })),
+    };
+  }
 
   @Post('deposit')
   @ApiOperation({
