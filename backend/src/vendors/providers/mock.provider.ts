@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ServiceType } from '../../common/enums';
 import {
   CustomerVerification,
+  ProviderPriceItem,
   RequeryParams,
   VendorOrder,
   VendorProvider,
@@ -50,6 +51,20 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     return null;
   }
 
+  /** Simulated vendor cost: the provider charges 2% below the sales price. */
+  private vendorCost(order: VendorOrder): number | undefined {
+    const amount = Number(order.amount ?? NaN);
+    if (!Number.isFinite(amount) || amount <= 0) return undefined;
+    return Math.round(amount * 0.98 * 100) / 100;
+  }
+
+  async getProviderPrice(item: ProviderPriceItem): Promise<number | null> {
+    // Simulate the vendor's price as a 2% discount on the sales price.
+    const base = item.amount ?? item.unitPrice;
+    if (base == null || !Number.isFinite(base) || base <= 0) return null;
+    return Math.round(base * 0.98 * 100) / 100;
+  }
+
   private token(segments = 4, len = 4): string {
     const parts = Array.from({ length: segments }, () =>
       Array.from({ length: len }, () => this.randomInt(0, 9)).join(''),
@@ -93,6 +108,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
       status: 'success',
       vendorReference: `MOCK-AIRTIME-${order.requestId.slice(0, 8)}`,
       commission: Math.round((order.amount ?? 0) * 0.02),
+      providerCost: this.vendorCost(order),
       meta: {
         phone: order.phone,
         network: order.productCode,
@@ -109,6 +125,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
       status: 'success',
       vendorReference: `MOCK-DATA-${order.requestId.slice(0, 8)}`,
       commission: Math.round((order.amount ?? 0) * 0.03),
+      providerCost: this.vendorCost(order),
       meta: {
         phone: order.phone,
         plan: order.productCode,
@@ -126,6 +143,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
       status: 'success',
       vendorReference: `MOCK-CABLE-${order.requestId.slice(0, 8)}`,
       commission: Math.round((order.amount ?? 0) * 0.025),
+      providerCost: this.vendorCost(order),
       meta: {
         smartCardNumber: order.smartCardNumber,
         package: order.productCode,
@@ -144,6 +162,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     return {
       status: 'success',
       vendorReference: `MOCK-ELE-${order.requestId.slice(0, 8)}`,
+      providerCost: this.vendorCost(order),
       meta: {
         meterNumber: order.meterNumber,
         meterType: order.customerData?.meterType ?? 'prepaid',
@@ -166,6 +185,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
       return {
         status: 'success',
         vendorReference: `MOCK-WAEC-${order.requestId.slice(0, 8)}`,
+        providerCost: this.vendorCost(order),
         meta: {
           product: 'WAEC Registration',
           quantity,
@@ -178,6 +198,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     return {
       status: 'success',
       vendorReference: `MOCK-WAEC-${order.requestId.slice(0, 8)}`,
+      providerCost: this.vendorCost(order),
       meta: {
         product: 'WAEC Result Checker PIN',
         quantity,
@@ -199,6 +220,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     return {
       status: 'success',
       vendorReference: `MOCK-JAMB-${order.requestId.slice(0, 8)}`,
+      providerCost: this.vendorCost(order),
       meta: {
         productName: product,
         profileId: order.customerData?.profileId,
@@ -219,6 +241,7 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     return {
       status: 'success',
       vendorReference: `MOCK-SMS-${order.requestId.slice(0, 8)}`,
+      providerCost: this.vendorCost(order),
       meta: {
         senderName: order.senderName,
         units,

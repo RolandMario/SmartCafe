@@ -1,0 +1,1 @@
+SmartCafe is a full-stack Nigerian VTU/bills payment platform. Via a React Native mobile app, customers buy airtime, data, cable TV, electricity, WAEC pins and bulk SMS, backed by a wallet-first NestJS API with transaction PINs and multi-vendor integrations, plus a Next.js admin dashboard.

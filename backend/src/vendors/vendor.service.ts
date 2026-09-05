@@ -10,6 +10,7 @@ import { Model } from 'mongoose';
 import { ServiceType } from '../common/enums';
 import {
   CustomerVerification,
+  ProviderPriceItem,
   RequeryParams,
   VerifyParams,
   VendorOrder,
@@ -211,6 +212,24 @@ export class VendorService implements OnModuleInit {
 
   verifyCustomer(params: VerifyParams): Promise<CustomerVerification> {
     return this.getProvider(params.serviceType).verifyCustomer(params);
+  }
+
+  /**
+   * Current provider price for a product — source of the live margins on the
+   * admin Profits page. Falls back to `null` when the configured provider has
+   * no price catalogue (or the lookup fails).
+   */
+  async getProviderPrice(params: ProviderPriceItem): Promise<number | null> {
+    const provider = this.getProvider(params.serviceType);
+    if (!provider.getProviderPrice) return null;
+    try {
+      return await provider.getProviderPrice(params);
+    } catch (err: any) {
+      this.logger.warn(
+        `Provider price lookup ${params.serviceType}/${params.productCode} failed: ${String(err?.message ?? err)}`,
+      );
+      return null;
+    }
   }
 
   /** Balance of the global/default provider (kept for backwards-compat). */

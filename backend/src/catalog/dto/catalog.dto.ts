@@ -75,6 +75,13 @@ export class CreateCatalogItemDto {
   @Min(0)
   unitPrice?: number;
 
+  @ApiPropertyOptional({ description: 'Provider cost per SMS unit (for profit reports)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  providerUnitCost?: number;
+
   @ApiPropertyOptional({ description: 'Validity period in days (data bundles)' })
   @IsOptional()
   @Type(() => Number)

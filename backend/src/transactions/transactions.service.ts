@@ -26,6 +26,12 @@ export interface BeginPurchaseInput {
   order: Omit<VendorOrder, 'requestId' | 'amount' | 'serviceType'>;
   /** 4-digit transaction PIN authorising this purchase */
   pin?: string;
+  /**
+   * The amount the vendor provider will charge for this order (used for profit
+   * reports). Captured from the vendor's own response when available; services
+   * whose APIs expose no charge (SMS) pass the admin-configured rate here.
+   */
+  providerCost?: number;
 }
 
 @Injectable()
@@ -116,6 +122,7 @@ export class TransactionsService {
             reference,
             requestId,
             amount: input.amount,
+            ...(input.providerCost != null ? { providerCost: input.providerCost } : {}),
             meta: input.meta,
             status: TransactionStatus.PENDING,
           },
@@ -190,6 +197,9 @@ export class TransactionsService {
       transaction.status = TransactionStatus.SUCCESS;
       transaction.vendorReference = result.vendorReference;
       transaction.providerMeta = { ...(result.meta ?? {}) };
+      // The vendor's own reported charge is authoritative; fall back to the
+      // amount passed along at purchase time (covers APIs with no price reply).
+      if (result.providerCost != null) transaction.providerCost = result.providerCost;
       transaction.commission = result.commission ?? 0;
       transaction.settledAt = new Date();
       await transaction.save();

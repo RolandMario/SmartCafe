@@ -4,6 +4,7 @@ import axios, { AxiosInstance } from 'axios';
 import { ServiceType } from '../../common/enums';
 import {
   CustomerVerification,
+  ProviderPriceItem,
   RequeryParams,
   VendorOrder,
   VendorProvider,
@@ -83,6 +84,49 @@ export class VtpassProvider implements VendorProvider {
     const key = String(code ?? '').toLowerCase();
     return VtpassProvider.ELECTRICITY_SERVICE_IDS[key] ?? key;
   }
+
+  /**
+   * Data is vended under vendor-specific service IDs (NOT the airtime IDs).
+   * The catalog product codes don't share a single shape — mtn-10mb-100,
+   * glo100, airt-100, eti-100 — so match the leading network token explicitly.
+   * (Verified against VTPass /service-variations: 9mobile-data does NOT exist,
+   * the real 9mobile serviceID is etisalat-data with eti-* variations.)
+   *   mtn*    -> mtn-data
+   *   glo*    -> glo-data
+   *   airt*   -> airtel-data
+   *   eti*    -> etisalat-data  (9mobile)
+   */
+  private dataServiceId(code?: string): string {
+    const key = String(code ?? '').toLowerCase();
+    const DATA_SERVICE_IDS: ReadonlyArray<readonly [string, string]> = [
+      ['mtn', 'mtn-data'],
+      ['glo', 'glo-data'],
+      ['airt', 'airtel-data'],
+      ['eti', 'etisalat-data'],
+      ['9mobile', 'etisalat-data'],
+    ];
+    const match = DATA_SERVICE_IDS.find(([prefix]) => key.startsWith(prefix));
+    return match ? match[1] : `${key.split('-')[0] || ''}-data`;
+  }
+
+  /** Cable plans are vended under VTPass serviceIDs dstv / gotv / startimes. */
+  private cableServiceId(code?: string): string {
+    const key = String(code ?? '').toLowerCase();
+    return { dstv: 'dstv', gotv: 'gotv', startimes: 'startimes' }[key] ?? 'dstv';
+  }
+
+  /**
+   * VTPass exposes WAEC via two serviceIDs, each with its own variation list.
+   * The catalog productCodes are internal identifiers — map them to the VTPass
+   * serviceID + variation_code so price lookups resolve correctly.
+   */
+  private static readonly WAEC_VARIATIONS: Record<
+    string,
+    { serviceID: string; variationCode: string }
+  > = {
+    'waec-result-checker': { serviceID: 'waec', variationCode: 'waecdirect' },
+    'waec-registration': { serviceID: 'waec-registration', variationCode: 'waec-registraion' },
+  };
 
   constructor(private config: ConfigService) {
     this.baseUrl = this.config.get<string>('VTPASS_BASE_URL', '');
@@ -182,11 +226,29 @@ export class VtpassProvider implements VendorProvider {
       .replace(/^Pin\s*:\s*/i, '')
       .trim();
 
+    // The amount VTPass actually charged for this order — the true vendor debit
+    // (sales price − our profit). It lives in `content.transactions.{amount,
+    // total_amount, unit_price × quantity}`, with the payload root as a fallback.
+    const unitPrice = Number(txn?.unit_price ?? txn?.unitPrice ?? NaN);
+    const txnQuantity = Number(txn?.quantity ?? NaN);
+    const chargedCandidates = [
+      txn?.amount,
+      txn?.total_amount,
+      txn?.totalAmount,
+      Number.isFinite(unitPrice) && (Number.isFinite(txnQuantity) ? unitPrice * (txnQuantity || 1) : unitPrice),
+      payload?.amount,
+    ]
+      .map((v) => Number(v ?? NaN))
+      .filter((v) => Number.isFinite(v) && v > 0);
+    const providerCost =
+      chargedCandidates.length > 0 ? Math.round(chargedCandidates[0] * 100) / 100 : undefined;
+
     return {
       status,
       vendorReference: payload?.requestId ?? payload?.request_id ?? txn?.product_name,
       message: responseDesc,
       commission: Number(content?.commission ?? 0) || undefined,
+      ...(providerCost !== undefined ? { providerCost } : {}),
       meta: {
         ...(token ? { token } : {}),
         ...(mainToken ? { mainToken } : {}),
@@ -254,33 +316,15 @@ export class VtpassProvider implements VendorProvider {
   }
 
   async buyData(order: VendorOrder): Promise<VendorResult> {
-    const code = (order.productCode || '').toLowerCase();
-    // Data is vended under vendor-specific service IDs (NOT the airtime IDs).
-    // The catalog product codes don't share a single shape — mtn-10mb-100,
-    // glo100, airt-100, eti-100 — so match the leading network token explicitly.
-    // (Verified against VTPass /service-variations: 9mobile-data does NOT exist,
-    // the real 9mobile serviceID is etisalat-data with eti-* variations.)
-    //   mtn*    -> mtn-data
-    //   glo*    -> glo-data
-    //   airt*   -> airtel-data
-    //   eti*    -> etisalat-data  (9mobile)
-    const DATA_SERVICE_IDS: ReadonlyArray<readonly [string, string]> = [
-      ['mtn', 'mtn-data'],
-      ['glo', 'glo-data'],
-      ['airt', 'airtel-data'],
-      ['eti', 'etisalat-data'],
-      ['9mobile', 'etisalat-data'],
-    ];
-    const match = DATA_SERVICE_IDS.find(([prefix]) => code.startsWith(prefix));
-    const serviceID = match ? match[1] : `${code.split('-')[0] || ''}-data`;
+    const serviceID = this.dataServiceId(order.productCode);
     // Data bundles are fixed-price variations — let VTPass use the variation price.
     return this.pay(order, serviceID, undefined, { omitAmount: true });
   }
 
   async buyCable(order: VendorOrder): Promise<VendorResult> {
-    const op = { dstv: 'dstv', gotv: 'gotv', startimes: 'startimes' }[order.productCode?.toLowerCase() ?? ''];
+    const serviceID = this.cableServiceId(order.productCode);
     // VTPass documents `subscription_type: renew` as mandatory for cable renewals.
-    return this.pay(order, op ?? 'dstv', order.smartCardNumber, { subscriptionType: 'renew' });
+    return this.pay(order, serviceID, order.smartCardNumber, { subscriptionType: 'renew' });
   }
 
   async buyElectricity(order: VendorOrder): Promise<VendorResult> {
@@ -331,6 +375,72 @@ export class VtpassProvider implements VendorProvider {
       vendorReference: order.requestId,
       meta: { units: order.recipients?.length ?? 0, recipients: order.recipients?.length ?? 0 },
     };
+  }
+
+  async getProviderPrice(item: ProviderPriceItem): Promise<number | null> {
+    const code = item.productCode ?? '';
+    let serviceID: string;
+    let variationCode: string;
+
+    switch (item.serviceType) {
+      case ServiceType.DATA: {
+        serviceID = this.dataServiceId(code);
+        variationCode = code;
+        break;
+      }
+      case ServiceType.CABLE: {
+        serviceID = this.cableServiceId(code);
+        variationCode = code;
+        break;
+      }
+      case ServiceType.WAEC: {
+        const waec = VtpassProvider.WAEC_VARIATIONS[code];
+        if (!waec) return null;
+        serviceID = waec.serviceID;
+        variationCode = waec.variationCode;
+        break;
+      }
+      case ServiceType.JAMB: {
+        serviceID = 'jamb';
+        variationCode = code;
+        break;
+      }
+      default:
+        // Airtime and electricity are variable-amount services — no fixed price.
+        return null;
+    }
+
+    const variations = await this.getVariations(serviceID);
+    const match = variations.find((v) => v.variationCode === variationCode);
+    return match ? match.variationAmount : null;
+  }
+
+  /** Fetch the current price catalogue for a VTPass service (GET /service-variations). */
+  private async getVariations(
+    serviceID: string,
+  ): Promise<{ variationCode: string; variationAmount: number; productName?: string }[]> {
+    try {
+      const { data } = await this.client.get('/service-variations', {
+        params: { serviceID },
+        timeout: 15000,
+      });
+      const variations = data?.content?.variations ?? [];
+      return variations
+        .map((v: any) => ({
+          variationCode: String(v?.variation_code ?? v?.variationCode ?? '').trim(),
+          variationAmount: Number(v?.variation_amount ?? v?.variationAmount ?? NaN),
+          productName: v?.variation_name ?? v?.name,
+        }))
+        .filter(
+          (v: { variationCode: string; variationAmount: number }) =>
+            v.variationCode && Number.isFinite(v.variationAmount) && v.variationAmount > 0,
+        );
+    } catch (err: any) {
+      this.logger.warn(
+        `VTPass service-variations (${serviceID}) failed: ${String(err?.message ?? err)}`,
+      );
+      return [];
+    }
   }
 
   async verifyCustomer(params: {

@@ -38,6 +38,10 @@ export class CatalogItem extends Document {
   @Prop({ type: Number })
   unitPrice?: number;
 
+  /** Vendor's charge per unit (SMS) — used for profit reports when the SMS API exposes no unit price. */
+  @Prop({ type: Number })
+  providerUnitCost?: number;
+
   /** Validity period in days (data bundles: 1 = daily, 7 = weekly, 30 = monthly, ...) */
   @Prop({ type: Number })
   validityDays?: number;

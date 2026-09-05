@@ -95,6 +95,15 @@ export class AdminController {
     return this.adminService.dashboard();
   }
 
+  @Get('profits')
+  @ApiOperation({
+    summary:
+      'Profit report: realized profit per service + current live margins per product',
+  })
+  profits(@Query('range') range?: string) {
+    return this.adminService.profits(range);
+  }
+
   // ---------------- Vendors ----------------
   @Get('vendors')
   @ApiOperation({ summary: 'List vendor providers and per-service routing' })

@@ -21,6 +21,10 @@ export class Transaction extends Document {
   @Prop({ type: Number, required: true })
   amount: number;
 
+  /** The amount the vendor provider actually charged for this order (sales price − profit). */
+  @Prop({ type: Number })
+  providerCost?: number;
+
   @Prop({ type: Number, default: 0 })
   commission: number;
 

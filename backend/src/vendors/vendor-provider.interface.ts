@@ -27,8 +27,22 @@ export interface VendorResult {
   vendorReference?: string;
   message?: string;
   commission?: number;
+  /** The amount the vendor actually charged for this order (the true account debit).
+   *  Profit per transaction = sales price (transaction.amount) − providerCost. */
+  providerCost?: number;
   /** Token, PIN, serial, customer name, balance etc. */
   meta?: Record<string, any>;
+}
+
+/** Input for the optional `VendorProvider.getProviderPrice` call (live-margin lookups). */
+export interface ProviderPriceItem {
+  serviceType: ServiceType;
+  /** Product / variation code (data plans, cable packages, WAEC/JAMB product codes). */
+  productCode?: string;
+  /** Sales-side price — the provider may fall back on it when its catalogue has no entry. */
+  amount?: number;
+  /** Per-unit sales price (SMS etc.). */
+  unitPrice?: number;
 }
 
 export interface CustomerVerification {
@@ -61,6 +75,13 @@ export interface VendorProvider {
 
   /** Services this provider can actually fulfil (drives the admin UI warnings). */
   readonly supportedServices: ServiceType[];
+
+  /**
+   * Current provider price for a product (live-margin source for the admin
+   * Profits page). Optional because not every provider exposes a price
+   * catalogue (e.g. ebulksms). Returns null when the price is not available.
+   */
+  getProviderPrice?(item: ProviderPriceItem): Promise<number | null>;
 
   buyAirtime(order: VendorOrder): Promise<VendorResult>;
   buyData(order: VendorOrder): Promise<VendorResult>;
