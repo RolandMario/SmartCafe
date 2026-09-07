@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Patch, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from '../auth/dto/auth.dto';
@@ -20,6 +20,12 @@ export class UsersController {
   @ApiOperation({ summary: 'Update your profile' })
   updateMe(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(user.userId, dto);
+  }
+
+  @Delete('me')
+  @ApiOperation({ summary: 'Permanently delete your account and all associated data' })
+  deleteMe(@CurrentUser() user: AuthUser) {
+    return this.usersService.deleteAccount(user.userId);
   }
 
   @Get('pin/status')

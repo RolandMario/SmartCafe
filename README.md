@@ -28,7 +28,7 @@ A full-stack Nigerian **VTU (Virtual Top-Up)** platform:
 - **Idempotency** — every order has a unique `requestId` (uuid) forwarded to the vendor; failed calls can be **re-queried**.
 - **JWT auth** (access + rotating refresh), RBAC (`user`/`admin`), validation pipes, Helmet, Swagger at `/api/docs`.
 - **Transaction PIN** — every customer purchase requires a 4-digit PIN (`GET /users/pin/status`, `POST /users/pin`, verified in `TransactionsService` before any wallet debit / vendor call).
-- **Shareable SmartCafe receipts** — a standard branded receipt (logo + app name) is shown after every transaction and from the history detail screen, with a native **Share** action.
+- **Shareable SmartCafe receipts** — a standard branded receipt (logo + app name) is shown after every transaction and from the history detail screen, with a native **Share** action that lets users send it as a PNG image, an A4 PDF, or plain text.
 
 ---
 

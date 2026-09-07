@@ -4,15 +4,27 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ClientSession, Connection, Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { User } from './schemas/user.schema';
+import { Wallet } from '../wallet/schemas/wallet.schema';
+import { WalletLedger } from '../wallet/schemas/wallet-ledger.schema';
+import { Transaction } from '../transactions/schemas/transaction.schema';
+import { Funding } from '../funding/schemas/funding.schema';
+import { Role } from '../common/enums';
 import { SearchPaginationDto } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(Wallet.name) private walletModel: Model<Wallet>,
+    @InjectModel(WalletLedger.name) private ledgerModel: Model<WalletLedger>,
+    @InjectModel(Transaction.name) private transactionModel: Model<Transaction>,
+    @InjectModel(Funding.name) private fundingModel: Model<Funding>,
+    @InjectConnection() private connection: Connection,
+  ) {}
 
   async findById(id: string): Promise<User> {
     const user = await this.userModel.findById(id);
@@ -68,6 +80,71 @@ export class UsersService {
     return user;
   }
 
+  /**
+   * Permanently delete the authenticated user's account and everything linked
+   * to it (wallet, wallet ledger, transactions and funding records).
+   *
+   * On a replica set (production Atlas) the removal runs inside a single atomic
+   * multi-document transaction; standalone MongoDB instances used for local
+   * development don't support transactions, so they fall back to a best-effort
+   * sequential deletion.
+   *
+   * Refuses to delete while:
+   *  - the account is an admin (needed to manage the platform), or
+   *  - the wallet still holds a positive balance (deleting would destroy funds).
+   */
+  async deleteAccount(userId: string): Promise<{ message: string }> {
+    const objectId = new Types.ObjectId(userId);
+    const session = await this.connection.startSession();
+
+    try {
+      await session.withTransaction(async () => {
+        await this.removeUserData(objectId, session);
+      });
+    } catch (err) {
+      if (!isTransactionUnsupportedError(err)) throw err;
+      await this.removeUserData(objectId);
+    } finally {
+      await session.endSession();
+    }
+
+    return { message: 'Account deleted successfully' };
+  }
+
+  /** Shared guard checks + deletion of the user and all referencing documents. */
+  private async removeUserData(objectId: Types.ObjectId, session?: ClientSession) {
+    const opts = session ? { session } : {};
+
+    const user = await this.userModel.findById(objectId, {}, opts).lean();
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.role === Role.ADMIN) {
+      throw new BadRequestException(
+        'Admin accounts cannot be deleted. Contact support for help.',
+      );
+    }
+
+    // Refuse while a balance remains rather than silently destroying funds.
+    const wallet = await this.walletModel.findOne({ user: objectId }, {}, opts).lean();
+    if (wallet && wallet.balance > 0) {
+      throw new BadRequestException(
+        'Your wallet still has a balance. Spend it before deleting your account.',
+      );
+    }
+
+    await this.ledgerModel.deleteMany({ user: objectId }, opts);
+    await this.transactionModel.deleteMany({ user: objectId }, opts);
+    // Release any funding records this user processed as an admin.
+    await this.fundingModel.updateMany(
+      { processedBy: objectId },
+      { $unset: { processedBy: 1 } },
+      opts,
+    );
+    await this.fundingModel.deleteMany({ user: objectId }, opts);
+    await this.walletModel.deleteMany({ user: objectId }, opts);
+    await this.userModel.deleteOne({ _id: objectId }, opts);
+  }
+
   async adminList(query: SearchPaginationDto) {
     const filter: Record<string, any> = {};
     if (query.search) {
@@ -90,4 +167,17 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
+}
+
+/**
+ * True when the driver reports that this MongoDB server cannot run
+ * multi-document transactions (i.e. a standalone mongod rather than a
+ * replica set / Atlas). On such servers the delete flow falls back to a
+ * sequential, un-transacted removal.
+ */
+function isTransactionUnsupportedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /transaction numbers are only allowed|transactions are not supported/i.test(
+    err.message,
+  );
 }
