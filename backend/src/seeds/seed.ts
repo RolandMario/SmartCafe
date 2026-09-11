@@ -25,6 +25,58 @@ const JAMB_VARIATIONS: Record<string, { serviceID: string; variationCode: string
   'utme-no-mock': { serviceID: 'jamb', variationCode: 'utme-no-mock' },
 };
 
+/**
+ * DATA is vended under per-network serviceIDs (mtn-data, glo-data, ...) whose
+ * variation lists ARE the real plan catalogues. The old static seed used invented
+ * codes (mtn-50mb-200, glo100, ...) that don't exist on the live /service-variations
+ * endpoint, so the app displayed - and /pay attempted - plans VTPass could never fulfil.
+ */
+const DATA_SERVICES: ReadonlyArray<{
+  serviceID: string;
+  provider: string;
+  providerLabel: string;
+}> = [
+  { serviceID: 'mtn-data', provider: 'MTN', providerLabel: 'MTN Nigeria' },
+  { serviceID: 'glo-data', provider: 'GLO', providerLabel: 'Globacom' },
+  { serviceID: 'airtel-data', provider: 'AIRTEL', providerLabel: 'Airtel Nigeria' },
+  { serviceID: 'etisalat-data', provider: '9MOBILE', providerLabel: '9mobile' },
+];
+
+/**
+ * VTPass embeds the price in display names ("... - N100", "MTN N500 1GB ...",
+ * "2.5GB Daily Plan - 750 Naira"). The app already renders the price separately,
+ * so drop any standalone naira token before storing the name.
+ */
+function cleanDataPlanName(raw: string): string {
+  let name = String(raw ?? '').trim();
+  name = name
+    .replace(/(?<![A-Za-z])N\s*,?\s*[\d.,]+\b/gi, ' ')
+    .replace(/\b[\d.,]+\s*Naira\b/gi, ' ')
+    .replace(/₦\s*[\d.,]+/g, ' ');
+  // Price tokens usually sit next to a dash; tidy up the leftover dash/space runs.
+  name = name
+    .replace(/\s*-\s*-\s*/g, ' - ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s*-\s*$/g, '')
+    .replace(/^\s*-\s*/g, '')
+    .trim();
+  return name || String(raw ?? '').trim();
+}
+
+/** "110MB Daily Plan (1 Day)" -> 1, "1.5GB Weekly Plan (7 Days)" -> 7, "3-Month" -> 90, "Yearly" -> 365. */
+function dataValidityDays(name: string, code: string): number | undefined {
+  const label = String(name ?? '');
+  const days = label.match(/(\d+)\s*[Dd]ays?\b/);
+  if (days) return Number(days[1]);
+  const months = label.match(/(\d+)\s*-\s*[Mm]onth/);
+  if (months) return Number(months[1]) * 30;
+  if (/yearly/i.test(String(code ?? '')) || /\b[Yy]early\b/.test(label)) return 365;
+  if (/\b[Ww]eekly\b/.test(label)) return 7;
+  if (/monthly/i.test(String(code ?? '')) || /\b[Mm]onthly\b/.test(label)) return 30;
+  if (/\b[Dd]aily\b/.test(label)) return 1;
+  return undefined;
+}
+
 const userSchema = new mongoose.Schema(
   {
     name: String,
@@ -84,12 +136,25 @@ async function seedCatalog() {
 
   await syncWaecPricing();
   await syncJambPricing();
+  const liveDataCodes = await syncDataPlans();
 
-  // Remove stale DATA bundles whose product codes no longer exist in the seed
-  // (codes that don't match the vendor's variation list would fail purchases).
-  const dataCodes = new Set(
-    CATALOG_SEED.filter((i) => i.service === 'DATA').map((i) => i.productCode),
-  );
+  // Remove stale DATA bundles — rows whose variation codes no longer exist in the
+  // authoritative list (the live VTPass sync when it ran, the static seed otherwise).
+  // Stale codes would fail purchases with "invalid variation" on /pay.
+  const dataProviderCodes = new Map<string, Set<string>>();
+  for (const item of CATALOG_SEED) {
+    if (item.service !== 'DATA') continue;
+    const codes = dataProviderCodes.get(item.provider) ?? new Set<string>();
+    codes.add(item.productCode);
+    dataProviderCodes.set(item.provider, codes);
+  }
+  if (liveDataCodes) {
+    for (const [provider, codes] of liveDataCodes) dataProviderCodes.set(provider, codes);
+  }
+  const dataCodes = new Set<string>();
+  for (const codes of dataProviderCodes.values()) {
+    for (const code of codes) dataCodes.add(code);
+  }
   const stale = await CatalogItem.deleteMany({
     service: 'DATA',
     provider: { $in: ['MTN', 'GLO', 'AIRTEL', '9MOBILE'] },
@@ -139,6 +204,107 @@ async function seedCatalog() {
   }
 
   console.log(`[catalog] ${CATALOG_SEED.length} products ensured (${created} new)`);
+}
+
+/**
+ * Replace the DATA catalog for every network with the REAL plans VTPass currently
+ * sells (GET /service-variations?serviceID=mtn-data, glo-data, ...). Each variation
+ * is upserted as an active catalog item using its variation_code as productCode —
+ * the exact value VTPass needs on /pay — with the plan name, fixed amount, and
+ * validity parsed from the vendor's own listing. Rows for a provider whose codes
+ * are no longer sold are pruned. Falls back to the static seed (no-op) when VTPass
+ * isn't configured or unreachable.
+ *
+ * Returns the live variation codes per provider, or null when nothing was synced
+ * (so the caller knows whether the live list or the static seed governs pruning).
+ */
+async function syncDataPlans(): Promise<Map<string, Set<string>> | null> {
+  const rawBase = process.env.VTPASS_BASE_URL ?? '';
+  const apiKey = process.env.VTPASS_API_KEY ?? '';
+  const publicKey = process.env.VTPASS_PUBLIC_KEY ?? '';
+  if (!rawBase || !apiKey || !publicKey) {
+    console.log('[catalog] VTPass keys not set — keeping seeded DATA plans');
+    return null;
+  }
+  // VTPass endpoints live under /api (https://vtpass.com/api, ...). Bare-host env
+  // values (e.g. https://vtpass.com) 302-redirect-loop on /service-variations, so
+  // normalise to the /api mount when it isn't already there.
+  const host = rawBase.replace(/\/+$/, '');
+  const baseUrl = /\/api\/?$/i.test(host) ? host : `${host}/api`;
+
+  const synced = new Map<string, Set<string>>();
+  for (const svc of DATA_SERVICES) {
+    let variations: Array<{
+      variation_code?: string;
+      variation_name?: string;
+      name?: string;
+      variation_amount?: string;
+    }> = [];
+    try {
+      const { data } = await axios.get(`${baseUrl}/service-variations`, {
+        params: { serviceID: svc.serviceID },
+        headers: { 'api-key': apiKey, 'public-key': publicKey },
+        timeout: 15000,
+      });
+      variations = data?.content?.variations ?? [];
+    } catch (err: any) {
+      console.warn(
+        `[catalog] ${svc.provider} data: could not reach VTPass (${String(err?.message ?? err)}) — keeping seeded plans`,
+      );
+      continue;
+    }
+    if (variations.length === 0) {
+      console.warn(
+        `[catalog] ${svc.provider} data: variation list empty for "${svc.serviceID}" — keeping seeded plans`,
+      );
+      continue;
+    }
+
+    const codes = new Set<string>();
+    // VTPass's live list occasionally repeats a variation_code for different plans
+    // (vendor data quirk). Dedupe, last occurrence wins, so each code = one row.
+    const plans = new Map<string, { name: string; amount: number; index: number }>();
+    for (let i = 0; i < variations.length; i++) {
+      const variation = variations[i];
+      const productCode = String(variation?.variation_code ?? '').trim();
+      const rawName = String(variation?.variation_name ?? variation?.name ?? '').trim();
+      const amount = Number(variation?.variation_amount ?? NaN);
+      if (!productCode || !rawName || !Number.isFinite(amount) || amount <= 0) continue;
+      plans.set(productCode, { name: cleanDataPlanName(rawName), amount, index: i });
+    }
+    for (const [productCode, plan] of plans) {
+      codes.add(productCode);
+      await CatalogItem.updateOne(
+        { service: 'DATA', provider: svc.provider, productCode },
+        {
+          $set: {
+            service: 'DATA',
+            provider: svc.provider,
+            providerLabel: svc.providerLabel,
+            productCode,
+            name: plan.name,
+            amount: plan.amount,
+            validityDays: dataValidityDays(plan.name, productCode) ?? 30,
+            sortOrder: plan.index + 1,
+            active: true,
+          },
+        },
+        { upsert: true },
+      );
+    }
+
+    const removed = await CatalogItem.deleteMany({
+      service: 'DATA',
+      provider: svc.provider,
+      productCode: { $nin: [...codes] },
+    });
+    console.log(
+      `[catalog] ${svc.provider} data: ${codes.size} live plans synced from "${svc.serviceID}"` +
+        (removed.deletedCount ? ` (removed ${removed.deletedCount} stale)` : ''),
+    );
+    synced.set(svc.provider, codes);
+  }
+  return synced.size > 0 ? synced : null;
 }
 
 /**
