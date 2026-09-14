@@ -171,6 +171,33 @@ export class AdminService {
             service: 1,
             amount: 1,
             providerCost: 1,
+            // Platform commission earned per successful transaction (admin profit):
+            // AIRTIME 3%, DATA 3%, ELECTRICITY 1%, CABLE 1.5% of amount,
+            // WAEC ₦150 flat, everything else (SMS, JAMB, ...) 0.
+            commission: {
+              $switch: {
+                branches: [
+                  {
+                    case: { $eq: ['$service', 'AIRTIME'] },
+                    then: { $multiply: ['$amount', 0.03] },
+                  },
+                  {
+                    case: { $eq: ['$service', 'DATA'] },
+                    then: { $multiply: ['$amount', 0.03] },
+                  },
+                  {
+                    case: { $eq: ['$service', 'ELECTRICITY'] },
+                    then: { $multiply: ['$amount', 0.01] },
+                  },
+                  {
+                    case: { $eq: ['$service', 'CABLE'] },
+                    then: { $multiply: ['$amount', 0.015] },
+                  },
+                  { case: { $eq: ['$service', 'WAEC'] }, then: 150 },
+                ],
+                default: 0,
+              },
+            },
             category: {
               $cond: [
                 { $eq: ['$service', 'CABLE'] },
@@ -208,6 +235,7 @@ export class AdminService {
             count: { $sum: 1 },
             sales: { $sum: '$amount' },
             providerCost: { $sum: { $ifNull: ['$providerCost', 0] } },
+            commission: { $sum: '$commission' },
             measured: { $sum: { $cond: [{ $ne: ['$providerCost', null] }, 1, 0] } },
           },
         },
@@ -228,6 +256,7 @@ export class AdminService {
           count: row.count,
           sales: round2(row.sales),
           providerCost: round2(row.providerCost),
+          commission: round2(row.commission),
           profit: round2(profit),
           margin: row.sales > 0 ? round2((profit / row.sales) * 100) : 0,
           measured: row.measured,
@@ -241,11 +270,19 @@ export class AdminService {
       (acc: any, c: any) => ({
         sales: acc.sales + c.sales,
         providerCost: acc.providerCost + c.providerCost,
+        commission: acc.commission + c.commission,
         profit: acc.profit + c.profit,
         measuredCount: acc.measuredCount + c.measured,
         unmeasuredCount: acc.unmeasuredCount + (c.count - c.measured),
       }),
-      { sales: 0, providerCost: 0, profit: 0, measuredCount: 0, unmeasuredCount: 0 },
+      {
+        sales: 0,
+        providerCost: 0,
+        commission: 0,
+        profit: 0,
+        measuredCount: 0,
+        unmeasuredCount: 0,
+      },
     );
 
     return {
@@ -254,6 +291,7 @@ export class AdminService {
       totals: {
         sales: round2(totals.sales),
         providerCost: round2(totals.providerCost),
+        commission: round2(totals.commission),
         profit: round2(totals.profit),
         measuredCount: totals.measuredCount,
         unmeasuredCount: totals.unmeasuredCount,
