@@ -21,8 +21,11 @@ import { VendorConfig } from './schemas/vendor-config.schema';
 import { MockProvider } from './providers/mock.provider';
 import { VtpassProvider } from './providers/vtpass.provider';
 import { EbulksmsProvider } from './providers/ebulksms.provider';
+import { PairgateProvider } from './providers/pairgate.provider';
+import { CatalogSyncService } from '../catalog/catalog-sync.service';
+import { DataPlanRow } from '../catalog/data-plan-sync';
 
-export const KNOWN_VENDOR_PROVIDERS = ['mock', 'vtpass', 'ebulksms'] as const;
+export const KNOWN_VENDOR_PROVIDERS = ['mock', 'vtpass', 'ebulksms', 'pairgate'] as const;
 export type KnownVendorProvider = (typeof KNOWN_VENDOR_PROVIDERS)[number];
 
 /**
@@ -54,12 +57,15 @@ export class VendorService implements OnModuleInit {
     private readonly config: ConfigService,
     @InjectModel(VendorConfig.name) private configModel: Model<VendorConfig>,
     mockProvider: MockProvider,
-    vtpassProvider: VtpassProvider,
+    private readonly vtpassProvider: VtpassProvider,
     ebulksmsProvider: EbulksmsProvider,
+    private readonly pairgateProvider: PairgateProvider,
+    private readonly catalogSync: CatalogSyncService,
   ) {
     this.register(mockProvider);
-    this.register(vtpassProvider);
+    this.register(this.vtpassProvider);
     this.register(ebulksmsProvider);
+    this.register(this.pairgateProvider);
   }
 
   private register(provider: VendorProvider) {
@@ -98,6 +104,13 @@ export class VendorService implements OnModuleInit {
           `Could not seed default vendor for ${service}: ${String(err?.message ?? err)}`,
         );
       }
+    }
+
+    // A deployment that boots with DATA already routed to pairgate should ship
+    // with Pairgate's plan list (not wait for an admin to flip the switch).
+    const dataProvider = this.configByService.get(ServiceType.DATA) ?? this.defaultProviderName;
+    if (dataProvider === 'pairgate' && this.pairgateProvider.isConfigured()) {
+      this.syncDataFrom('pairgate');
     }
   }
 
@@ -166,6 +179,7 @@ export class VendorService implements OnModuleInit {
         `Vendor provider "${provider}" is not registered`,
       );
     }
+    const previous = this.configByService.get(service);
     const doc = await this.configModel.findOneAndUpdate(
       { service },
       { $set: { service, provider } },
@@ -173,7 +187,46 @@ export class VendorService implements OnModuleInit {
     );
     this.configByService.set(service, provider);
     this.logger.log(`Vendor routing: ${service} → ${provider}`);
+
+    // DATA is the only service pairgate vends, so a routing change on it swaps
+    // the whole DATA catalog: Pairgate's own plan list (productCode = plan_id)
+    // when enabled, the VTPass plan list (or static seed) when disabled.
+    if (service === ServiceType.DATA && previous !== provider) {
+      if (provider === 'pairgate') {
+        this.syncDataFrom('pairgate');
+      } else if (previous === 'pairgate') {
+        this.syncDataFrom('vtpass');
+      }
+    }
     return doc;
+  }
+
+  /**
+   * Background DATA catalog re-seed when the admin flips the DATA routing.
+   * Pairgate throttles requests (~1-2s), so the sync runs off the hot path and
+   * the admin PATCH returns immediately; the plan list lands shortly after.
+   */
+  private syncDataFrom(source: 'pairgate' | 'vtpass'): void {
+    void this.syncDataPlans(source).catch((err: any) => {
+      this.logger.warn(
+        `[catalog] background DATA re-seed from ${source} failed: ${String(err?.message ?? err)}`,
+      );
+    });
+  }
+
+  private async syncDataPlans(source: 'pairgate' | 'vtpass'): Promise<void> {
+    const rows: DataPlanRow[] =
+      source === 'pairgate'
+        ? await this.pairgateProvider.fetchAllDataPlans()
+        : await this.vtpassProvider.fetchAllDataPlans();
+    if (!rows.length) {
+      this.logger.warn(`[catalog] ${source} returned no DATA plans — catalog left untouched`);
+      return;
+    }
+    const { synced, removed } = await this.catalogSync.replaceDataCatalog(rows);
+    this.logger.log(
+      `[catalog] DATA plans re-seeded from ${source}: ${synced} upserted, ${removed} pruned`,
+    );
   }
 
   async buy(order: VendorOrder): Promise<VendorResult> {

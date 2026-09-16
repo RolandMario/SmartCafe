@@ -64,8 +64,8 @@ class UpdateVendorDto {
   @IsEnum(ServiceType)
   service: ServiceType;
 
-  @ApiProperty({ enum: ['mock', 'vtpass', 'ebulksms'] })
-  @IsIn(['mock', 'vtpass', 'ebulksms'])
+  @ApiProperty({ enum: ['mock', 'vtpass', 'ebulksms', 'pairgate'] })
+  @IsIn(['mock', 'vtpass', 'ebulksms', 'pairgate'])
   provider: string;
 }
 

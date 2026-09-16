@@ -14,6 +14,7 @@ export enum VendorProviderName {
   MOCK = 'mock',
   VTPASS = 'vtpass',
   EBULKSMS = 'ebulksms',
+  PAIRGATE = 'pairgate',
 }
 
 class EnvironmentVariables {
@@ -89,6 +90,18 @@ class EnvironmentVariables {
   @IsString()
   // 0 = skip DND-registered numbers (default), 1 = force delivery to DND
   EBULK_DND: string = '0';
+
+  // --- Pairgate data provider (used when VENDOR_PROVIDER=pairgate or DATA pinned to it) ---
+  // Pairgate currently only vends data bundles on this platform. Switching the
+  // DATA routing to `pairgate` re-seeds the DATA catalog from Pairgate's plan
+  // list; switching back re-syncs from VTPass.
+  @IsOptional()
+  @IsString()
+  PAIRGATE_BASE_URL: string = 'https://pairgate.com/api/v1';
+
+  @IsOptional()
+  @IsString()
+  PAIRGATE_API_KEY: string = '';
 
   // --- Monnify payment gateway (wallet funding) ---
   @IsOptional()

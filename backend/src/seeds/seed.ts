@@ -3,6 +3,11 @@ import mongoose from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import axios from 'axios';
 import { CATALOG_SEED, SeedItem } from './catalog-seed';
+import {
+  DATA_SERVICES,
+  cleanDataPlanName,
+  dataValidityDays,
+} from '../catalog/data-plan-sync';
 
 const uri = process.env.MONGODB_URI ?? 'mongodb://localhost:27017/vtu';
 
@@ -24,58 +29,6 @@ const JAMB_VARIATIONS: Record<string, { serviceID: string; variationCode: string
   'utme-mock': { serviceID: 'jamb', variationCode: 'utme-mock' },
   'utme-no-mock': { serviceID: 'jamb', variationCode: 'utme-no-mock' },
 };
-
-/**
- * DATA is vended under per-network serviceIDs (mtn-data, glo-data, ...) whose
- * variation lists ARE the real plan catalogues. The old static seed used invented
- * codes (mtn-50mb-200, glo100, ...) that don't exist on the live /service-variations
- * endpoint, so the app displayed - and /pay attempted - plans VTPass could never fulfil.
- */
-const DATA_SERVICES: ReadonlyArray<{
-  serviceID: string;
-  provider: string;
-  providerLabel: string;
-}> = [
-  { serviceID: 'mtn-data', provider: 'MTN', providerLabel: 'MTN Nigeria' },
-  { serviceID: 'glo-data', provider: 'GLO', providerLabel: 'Globacom' },
-  { serviceID: 'airtel-data', provider: 'AIRTEL', providerLabel: 'Airtel Nigeria' },
-  { serviceID: 'etisalat-data', provider: '9MOBILE', providerLabel: '9mobile' },
-];
-
-/**
- * VTPass embeds the price in display names ("... - N100", "MTN N500 1GB ...",
- * "2.5GB Daily Plan - 750 Naira"). The app already renders the price separately,
- * so drop any standalone naira token before storing the name.
- */
-function cleanDataPlanName(raw: string): string {
-  let name = String(raw ?? '').trim();
-  name = name
-    .replace(/(?<![A-Za-z])N\s*,?\s*[\d.,]+\b/gi, ' ')
-    .replace(/\b[\d.,]+\s*Naira\b/gi, ' ')
-    .replace(/₦\s*[\d.,]+/g, ' ');
-  // Price tokens usually sit next to a dash; tidy up the leftover dash/space runs.
-  name = name
-    .replace(/\s*-\s*-\s*/g, ' - ')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s*-\s*$/g, '')
-    .replace(/^\s*-\s*/g, '')
-    .trim();
-  return name || String(raw ?? '').trim();
-}
-
-/** "110MB Daily Plan (1 Day)" -> 1, "1.5GB Weekly Plan (7 Days)" -> 7, "3-Month" -> 90, "Yearly" -> 365. */
-function dataValidityDays(name: string, code: string): number | undefined {
-  const label = String(name ?? '');
-  const days = label.match(/(\d+)\s*[Dd]ays?\b/);
-  if (days) return Number(days[1]);
-  const months = label.match(/(\d+)\s*-\s*[Mm]onth/);
-  if (months) return Number(months[1]) * 30;
-  if (/yearly/i.test(String(code ?? '')) || /\b[Yy]early\b/.test(label)) return 365;
-  if (/\b[Ww]eekly\b/.test(label)) return 7;
-  if (/monthly/i.test(String(code ?? '')) || /\b[Mm]onthly\b/.test(label)) return 30;
-  if (/\b[Dd]aily\b/.test(label)) return 1;
-  return undefined;
-}
 
 const userSchema = new mongoose.Schema(
   {

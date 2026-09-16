@@ -12,6 +12,14 @@ import {
   VendorStatus,
 } from '../vendor-provider.interface';
 
+import {
+  DATA_SERVICES,
+  DataPlanRow,
+  cleanDataPlanName,
+  dataValidityDays,
+  staticDataPlanRows,
+} from '../../catalog/data-plan-sync';
+
 /**
  * VTPass provider adapter. Covers all platform services:
  * airtime, data, cable (DSTV/GOTV/StarTimes), electricity
@@ -129,7 +137,12 @@ export class VtpassProvider implements VendorProvider {
   };
 
   constructor(private config: ConfigService) {
-    this.baseUrl = this.config.get<string>('VTPASS_BASE_URL', '');
+    // Normalise away any trailing slashes (e.g. https://vtpass.com/api/) — axios
+    // joins baseURL + '/service-variations' with the slash kept, so a trailing
+    // slash produces `api//service-variations`, which VTPass 404s.
+    this.baseUrl = String(
+      this.config.get<string>('VTPASS_BASE_URL', ''),
+    ).replace(/\/+$/, '');
     const apiKey = this.config.get<string>('VTPASS_API_KEY', '');
     const secretKey = this.config.get<string>('VTPASS_SECRET_KEY', '');
     const publicKey = this.config.get<string>('VTPASS_PUBLIC_KEY', '');
@@ -441,6 +454,67 @@ export class VtpassProvider implements VendorProvider {
       );
       return [];
     }
+  }
+
+  isConfigured(): boolean {
+    return (
+      !!this.config.get<string>('VTPASS_API_KEY', '') &&
+      !!this.config.get<string>('VTPASS_PUBLIC_KEY', '')
+    );
+  }
+
+  /**
+   * Full DATA plan list for every network (GET /service-variations?serviceID=mtn-data, ...) —
+   * the runtime equivalent of the boot-time `syncDataPlans()` used to restore the
+   * VTPass-keyed DATA catalog after pairgate was pinned. Falls back to the bundled
+   * static DATA seed when VTPass is not configured or unreachable.
+   */
+  async fetchAllDataPlans(): Promise<DataPlanRow[]> {
+    if (!this.isConfigured()) {
+      this.logger.warn('VTPass keys not set — restoring seeded DATA plans');
+      return staticDataPlanRows();
+    }
+    const rows: DataPlanRow[] = [];
+    for (const svc of DATA_SERVICES) {
+      const variations = await this.getVariations(svc.serviceID);
+      if (variations.length === 0) {
+        this.logger.warn(
+          `VTPass data: variation list empty for "${svc.serviceID}" — keeping any existing ${svc.provider} plans`,
+        );
+        continue;
+      }
+      // VTPass's live list occasionally repeats a variation_code for different plans
+      // (vendor data quirk). Dedupe, last occurrence wins, so each code = one row.
+      const plans = new Map<string, { name: string; amount: number }>();
+      for (const variation of variations) {
+        if (
+          variation.variationCode &&
+          Number.isFinite(variation.variationAmount) &&
+          variation.variationAmount > 0
+        ) {
+          plans.set(variation.variationCode, {
+            name: cleanDataPlanName(variation.productName ?? ''),
+            amount: variation.variationAmount,
+          });
+        }
+      }
+      for (const [code, plan] of plans) {
+        rows.push({
+          provider: svc.provider,
+          providerLabel: svc.providerLabel,
+          productCode: code,
+          name: plan.name,
+          amount: plan.amount,
+          validityDays: dataValidityDays(plan.name, code) ?? 30,
+          description: '',
+        });
+      }
+    }
+    if (rows.length === 0) {
+      this.logger.warn('VTPass returned no DATA plans — restoring seeded DATA plans');
+      return staticDataPlanRows();
+    }
+    return rows;
   }
 
   async verifyCustomer(params: {

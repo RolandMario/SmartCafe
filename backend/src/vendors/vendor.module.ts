@@ -4,7 +4,9 @@ import { VendorService } from './vendor.service';
 import { MockProvider } from './providers/mock.provider';
 import { VtpassProvider } from './providers/vtpass.provider';
 import { EbulksmsProvider } from './providers/ebulksms.provider';
+import { PairgateProvider } from './providers/pairgate.provider';
 import { VendorConfig, VendorConfigSchema } from './schemas/vendor-config.schema';
+import { CatalogModule } from '../catalog/catalog.module';
 
 @Global()
 @Module({
@@ -12,8 +14,9 @@ import { VendorConfig, VendorConfigSchema } from './schemas/vendor-config.schema
     MongooseModule.forFeature([
       { name: VendorConfig.name, schema: VendorConfigSchema },
     ]),
+    CatalogModule,
   ],
-  providers: [VendorService, MockProvider, VtpassProvider, EbulksmsProvider],
+  providers: [VendorService, MockProvider, VtpassProvider, EbulksmsProvider, PairgateProvider],
   exports: [VendorService],
 })
 export class VendorModule {}

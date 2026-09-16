@@ -6,6 +6,9 @@ export interface VendorOrder {
   requestId: string;
   /** Product / variation code (data plans, cable packages, WAEC product) */
   productCode?: string;
+  /** Vendor/catalog provider key (e.g. 'MTN', 'GLO') — used by providers whose
+   *  APIs key products by network (e.g. pairgate's provider_id slug). */
+  provider?: string;
   amount?: number;
   /** Number of units to buy (WAEC registration PINs etc.). Defaults to 1. */
   quantity?: number;

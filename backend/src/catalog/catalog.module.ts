@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CatalogController } from './catalog.controller';
 import { CatalogService } from './catalog.service';
+import { CatalogSyncService } from './catalog-sync.service';
 import { CatalogItem, CatalogItemSchema } from './schemas/catalog-item.schema';
 
 @Module({
@@ -9,7 +10,7 @@ import { CatalogItem, CatalogItemSchema } from './schemas/catalog-item.schema';
     MongooseModule.forFeature([{ name: CatalogItem.name, schema: CatalogItemSchema }]),
   ],
   controllers: [CatalogController],
-  providers: [CatalogService],
-  exports: [CatalogService],
+  providers: [CatalogService, CatalogSyncService],
+  exports: [CatalogService, CatalogSyncService],
 })
 export class CatalogModule {}

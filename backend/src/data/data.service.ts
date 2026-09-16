@@ -29,7 +29,7 @@ export class DataService {
         phone: dto.phone,
         amount: item.amount,
       },
-      order: { productCode: item.productCode, phone: dto.phone },
+      order: { productCode: item.productCode, provider: item.provider, phone: dto.phone },
       pin: dto.pin,
     });
   }
