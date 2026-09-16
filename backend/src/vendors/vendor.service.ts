@@ -61,6 +61,26 @@ export class VendorService implements OnModuleInit {
   private static readonly CONFIG_REFRESH_TTL_MS = 5000;
   private lastConfigRefresh = 0;
 
+  /** Status of the current/last DATA catalog re-seed (surfaced in the admin UI). */
+  private dataSyncStatus: {
+    state: 'idle' | 'syncing' | 'done' | 'error';
+    source?: 'pairgate' | 'vtpass';
+    startedAt?: string;
+    finishedAt?: string;
+    synced?: number;
+    removed?: number;
+    message?: string;
+  } = { state: 'idle' };
+
+  /** Guards against overlapping background re-seeds (boot + admin switch). */
+  private dataSyncRunning = false;
+
+  /** The latest re-seed requested while another was running (applied afterwards). */
+  private pendingDataSync: {
+    source: 'pairgate' | 'vtpass';
+    previousProvider?: string;
+  } | null = null;
+
   constructor(
     private readonly config: ConfigService,
     @InjectModel(VendorConfig.name) private configModel: Model<VendorConfig>,
@@ -189,6 +209,21 @@ export class VendorService implements OnModuleInit {
       globalDefault: this.defaultProviderName,
       providers: this.getProviderCapabilities(),
       configs: this.getEffectiveConfig(),
+      dataCatalog: await this.catalogSync.countDataPlans(),
+      dataSync: { ...this.dataSyncStatus },
+    };
+  }
+
+  /** Trigger a manual DATA catalog re-seed from the active provider (admin button). */
+  async refreshDataSync() {
+    await this.refreshConfigIfStale();
+    const provider = this.getProvider(ServiceType.DATA).name;
+    if (provider === 'pairgate' || provider === 'vtpass') {
+      this.syncDataFrom(provider as 'pairgate' | 'vtpass');
+    }
+    return {
+      dataSync: { ...this.dataSyncStatus },
+      dataCatalog: await this.catalogSync.countDataPlans(),
     };
   }
 
@@ -241,44 +276,109 @@ export class VendorService implements OnModuleInit {
     source: 'pairgate' | 'vtpass',
     previousProvider?: string,
   ): Promise<void> {
-    let rows: DataPlanRow[] = [];
-    try {
-      rows =
-        source === 'pairgate'
-          ? await this.pairgateProvider.fetchAllDataPlans()
-          : await this.vtpassProvider.fetchAllDataPlans();
-    } catch (err: any) {
-      this.logger.warn(
-        `[catalog] ${source} DATA fetch failed: ${String(err?.message ?? err)}`,
+    if (this.dataSyncRunning) {
+      // Keep the LATEST requested provider — e.g. an admin flipping DATA back
+      // to vtpass while pairgate is still re-seeding must not be dropped.
+      this.pendingDataSync = { source, previousProvider };
+      this.logger.log(
+        `[catalog] DATA re-seed from ${source} requested while a sync is running — queued`,
       );
-    }
-    if (!rows.length) {
-      if (source === 'pairgate' && previousProvider && previousProvider !== 'pairgate') {
-        // Pairgate produced no plans — don't leave DATA pointed at a provider
-        // whose plans aren't in the catalog (every purchase would fail). Revert
-        // the routing to what it was before the switch.
-        this.logger.warn(
-          `[catalog] Pairgate returned no DATA plans — reverting DATA routing to "${previousProvider}"`,
-        );
-        this.configByService.set(ServiceType.DATA, previousProvider);
-        await this.configModel.updateOne(
-          { service: ServiceType.DATA },
-          { $set: { service: ServiceType.DATA, provider: previousProvider } },
-          { upsert: true },
-        );
-      } else {
-        this.logger.warn(`[catalog] ${source} returned no DATA plans — catalog left untouched`);
-      }
       return;
     }
-    const { synced, removed } = await this.catalogSync.replaceDataCatalog(rows);
-    this.logger.log(
-      `[catalog] DATA plans re-seeded from ${source}: ${synced} upserted, ${removed} pruned`,
-    );
+    this.dataSyncRunning = true;
+    this.dataSyncStatus = {
+      state: 'syncing',
+      source,
+      startedAt: new Date().toISOString(),
+    };
+    const startedAt = this.dataSyncStatus.startedAt!;
+    const finish = (status: 'done' | 'error', extra: Partial<typeof this.dataSyncStatus> = {}) => {
+      this.dataSyncStatus = {
+        state: status,
+        source,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        ...extra,
+      };
+    };
+
+    try {
+      let rows: DataPlanRow[] = [];
+      try {
+        rows =
+          source === 'pairgate'
+            ? await this.pairgateProvider.fetchAllDataPlans()
+            : await this.vtpassProvider.fetchAllDataPlans();
+      } catch (err: any) {
+        const message = String(err?.message ?? 'DATA fetch failed');
+        this.logger.warn(`[catalog] ${source} DATA fetch failed: ${message}`);
+        finish('error', { message });
+        return;
+      }
+
+      if (!rows.length) {
+        if (source === 'pairgate' && previousProvider && previousProvider !== 'pairgate') {
+          // Pairgate produced no plans — don't leave DATA pointed at a provider
+          // whose plans aren't in the catalog (every purchase would fail). Revert
+          // the routing to what it was before the switch.
+          this.logger.warn(
+            `[catalog] Pairgate returned no DATA plans — reverting DATA routing to "${previousProvider}"`,
+          );
+          this.configByService.set(ServiceType.DATA, previousProvider);
+          await this.configModel.updateOne(
+            { service: ServiceType.DATA },
+            { $set: { service: ServiceType.DATA, provider: previousProvider } },
+            { upsert: true },
+          );
+          finish('error', {
+            message: `Pairgate returned no plans — reverted DATA to ${previousProvider}`,
+          });
+        } else {
+          const message = `${source} returned no DATA plans — catalog left untouched`;
+          this.logger.warn(`[catalog] ${message}`);
+          finish('error', { message });
+        }
+        return;
+      }
+
+      const { synced, removed } = await this.catalogSync.replaceDataCatalog(rows);
+      this.logger.log(
+        `[catalog] DATA plans re-seeded from ${source}: ${synced} upserted, ${removed} pruned`,
+      );
+      finish('done', { synced, removed });
+    } finally {
+      this.dataSyncRunning = false;
+      const queued = this.pendingDataSync;
+      this.pendingDataSync = null;
+      if (queued) {
+        this.logger.log(`[catalog] running queued DATA re-seed from ${queued.source}`);
+        void this.syncDataPlans(queued.source, queued.previousProvider).catch((err: any) => {
+          this.logger.warn(
+            `[catalog] queued DATA re-seed from ${queued.source} failed: ${String(err?.message ?? err)}`,
+          );
+        });
+      }
+    }
   }
 
   async buy(order: VendorOrder): Promise<VendorResult> {
     await this.refreshConfigIfStale();
+    // While a provider switch is re-seeding the DATA catalog, the old plan rows
+    // are being replaced — purchasing them would hit the new provider with stale
+    // plan codes. Refuse politely instead of returning confusing vendor errors.
+    if (
+      order.serviceType === ServiceType.DATA &&
+      this.dataSyncStatus.state === 'syncing'
+    ) {
+      this.logger.warn(
+        `[vendors] DATA purchase ${order.requestId} deferred — catalog re-seed in progress`,
+      );
+      return {
+        status: 'failed',
+        message:
+          'The data plan list is being refreshed after the provider switch — please try again in about a minute.',
+      };
+    }
     const provider = this.getProvider(order.serviceType);
     switch (order.serviceType) {
       case ServiceType.AIRTIME:

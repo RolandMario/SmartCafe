@@ -123,6 +123,14 @@ export class AdminController {
     return this.vendorService.setProvider(dto.service, dto.provider);
   }
 
+  @Post('vendors/refresh-data')
+  @ApiOperation({
+    summary: 'Re-seed the DATA catalog from the active data provider (pairgate/vtpass)',
+  })
+  refreshVendorData() {
+    return this.vendorService.refreshDataSync();
+  }
+
   // ---------------- Payment gateways (wallet funding) ----------------
   @Get('payment-gateways')
   @ApiOperation({

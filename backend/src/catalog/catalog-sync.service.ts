@@ -78,4 +78,49 @@ export class CatalogSyncService {
 
     return { synced, removed };
   }
+
+  /**
+   * Shape of the current active DATA catalog, split by vendor source — used by
+   * the admin Vendors page to show whether the catalog actually switched.
+   */
+  async countDataPlans(): Promise<{
+    total: number;
+    pairgate: number;
+    vtpass: number;
+    source: 'pairgate' | 'vtpass' | 'mixed' | 'empty';
+  }> {
+    const items = await this.catalogModel
+      .find(
+        { service: ServiceType.DATA, active: true },
+        { productCode: 1, description: 1 },
+      )
+      .lean();
+    let pairgate = 0;
+    let vtpass = 0;
+    for (const item of items) {
+      const description = String(item.description ?? '');
+      const code = String(item.productCode ?? '');
+      // Pairgate plans are stored with numeric plan_ids and a "Pairgate <type>"
+      // description by the re-seed; everything else is a VTPass/static-seed plan.
+      if (description.startsWith('Pairgate ') || /^\d+$/.test(code)) {
+        pairgate++;
+      } else {
+        vtpass++;
+      }
+    }
+    const total = items.length;
+    return {
+      total,
+      pairgate,
+      vtpass,
+      source:
+        total === 0
+          ? 'empty'
+          : pairgate > 0 && vtpass === 0
+            ? 'pairgate'
+            : vtpass > 0 && pairgate === 0
+              ? 'vtpass'
+              : 'mixed',
+    };
+  }
 }
