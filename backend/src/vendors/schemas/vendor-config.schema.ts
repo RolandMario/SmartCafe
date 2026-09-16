@@ -6,8 +6,10 @@ import { ServiceType } from '../../common/enums';
  * Persistent per-service vendor routing policy.
  *
  * Administrators can pin a service (AIRTIME, DATA, CABLE, ...) to a specific
- * vendor provider (mock | vtpass | ebulksms) without restarting the backend.
- * Services without a row fall back to the global `VENDOR_PROVIDER` env var.
+ * vendor provider (mock | vtpass | ebulksms | pairgate) without restarting the
+ * backend. Services without a row fall back to their per-service default —
+ * pairgate for DATA (when PAIRGATE_API_KEY is set), otherwise the global
+ * `VENDOR_PROVIDER` env var.
  */
 @Schema({
   timestamps: true,

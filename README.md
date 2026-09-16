@@ -24,8 +24,8 @@ A full-stack Nigerian **VTU (Virtual Top-Up)** platform:
   - `MockProvider` (default) — simulated success/failure, tokens, PINs — no keys needed.
   - `VTPassProvider` — production adapter for VTPass (airtime/data/cable/electricity/WAEC + messaging API for SMS). Switch with `VENDOR_PROVIDER=vtpass` and add your keys.
   - `EbulksmsProvider` — production adapter for bulk SMS via the ebulksms JSON API (`sendsms.json`, `application/json` content type, `234…` international recipient numbers, 160-char pages up to 612 chars). Switch with `VENDOR_PROVIDER=ebulksms` and add `EBULK_USERNAME` / `EBULK_API_KEY`; SMS-only, so keep `vtpass` for the other services.
-  - `PairgateProvider` — production adapter for Pairgate data bundles (`/data-plans`, `/data/purchase`, `/wallet/balance`). Switch with `VENDOR_PROVIDER=pairgate` (or pin DATA on the admin **Vendors** page) and add `PAIRGATE_API_KEY`. Pairgate throttles requests, so switching DATA to it re-seeds the DATA catalog from Pairgate's plan list in the background; switching back re-syncs from VTPass.
-- **Per-service vendor routing (admin-configurable)** — each service (AIRTIME, DATA, CABLE, ELECTRICITY, WAEC, SMS) can be pinned to its own provider (`mock`/`vtpass`/`ebulksms`/`pairgate`) from the admin **Vendors** page (`GET/PATCH /admin/vendors`). The choice is persisted in Mongo (`vendorconfigs`), seeded from `VENDOR_PROVIDER` at startup, and applied to purchases, verifications and requeries immediately — no restart needed. The page flags incompatible pairings (e.g. ebulksms only supports SMS, pairgate only DATA).
+  - `PairgateProvider` — production adapter for Pairgate data bundles (`/data-plans`, `/data/purchase`, `/wallet/balance`). **Pairgate is the default DATA provider**: set `PAIRGATE_API_KEY` and DATA routes to it automatically on boot (the DATA catalog is re-seeded from Pairgate's plan list in the background because Pairgate throttles requests); an admin can also pin DATA on the **Vendors** page. Switching DATA away re-syncs from VTPass.
+- **Per-service vendor routing (admin-configurable)** — each service (AIRTIME, DATA, CABLE, ELECTRICITY, WAEC, SMS) can be pinned to its own provider (`mock`/`vtpass`/`ebulksms`/`pairgate`) from the admin **Vendors** page (`GET/PATCH /admin/vendors`). The choice is persisted in Mongo (`vendorconfigs`), seeded from `VENDOR_PROVIDER` at startup (DATA instead defaults to Pairgate when `PAIRGATE_API_KEY` is set), and applied to purchases, verifications and requeries immediately — no restart needed. The page flags incompatible pairings (e.g. ebulksms only supports SMS, pairgate only DATA).
 - **Idempotency** — every order has a unique `requestId` (uuid) forwarded to the vendor; failed calls can be **re-queried**.
 - **JWT auth** (access + rotating refresh), RBAC (`user`/`admin`), validation pipes, Helmet, Swagger at `/api/docs`.
 - **Transaction PIN** — every customer purchase requires a 4-digit PIN (`GET /users/pin/status`, `POST /users/pin`, verified in `TransactionsService` before any wallet debit / vendor call).
@@ -120,18 +120,22 @@ Includes: dashboard (volume/commission by service), transaction management with 
 
 ## Using Pairgate data provider
 
+Pairgate is the **default data provider**: DATA routes to it automatically once
+`PAIRGATE_API_KEY` is set.
+
 1. Fill in the Pairgate credentials in `backend/.env`:
    ```
    PAIRGATE_BASE_URL=https://pairgate.com/api/v1
    PAIRGATE_API_KEY=<your pairgate api key>
    ```
-2. Make Pairgate the active data provider by either setting `VENDOR_PROVIDER=pairgate`
-   or, without restarting, pinning **DATA → pairgate** on the admin **Vendors** page.
-3. Switching DATA to pairgate re-seeds the DATA catalog with Pairgate's own plan list
-   (`productCode` becomes the Pairgate `plan_id`) in the background, because Pairgate
-   rate-limits requests (~1-2s each); switching DATA away from pairgate re-syncs the
-   VTPass plan list. Purchases made in the brief sync window may fail until the new
-   plans land (they are refunded automatically).
+2. On the next backend start, DATA is switched to `pairgate` automatically
+   (existing deployments that auto-seeded DATA to `vtpass` are re-rolled too)
+   and the DATA catalog is re-seeded with Pairgate's own plan list
+   (`productCode` becomes the Pairgate `plan_id`) in the background, because
+   Pairgate rate-limits requests (~1-2s each). You can still pin DATA
+   per-service from the admin **Vendors** page; switching DATA away from
+   pairgate re-syncs the VTPass plan list. Purchases made in the brief sync
+   window may fail until the new plans land (they are refunded automatically).
 
 > **Important — which backend to switch on.** The **admin dashboard, the mobile app,
 > and the backend must talk to the same API**. Both apps default to the hosted API

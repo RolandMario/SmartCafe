@@ -46,9 +46,10 @@ function delay(ms: number): Promise<void> {
  * (~1-2s between requests per key — "Please wait N seconds before retrying"),
  * so catalog reads are paced and retried after the suggested wait.
  *
- * Configure with PAIRGATE_BASE_URL / PAIRGATE_API_KEY. Pin the DATA service to
- * `pairgate` from the admin Vendors page (or set VENDOR_PROVIDER=pairgate) to
- * make it the active data provider.
+ * Configure with PAIRGATE_BASE_URL / PAIRGATE_API_KEY. DATA now defaults to
+ * `pairgate` whenever the key is set — the routing flip (and its catalog
+ * re-seed) happens automatically at boot, or it can be pinned per-service from
+ * the admin Vendors page.
  */
 @Injectable()
 export class PairgateProvider implements VendorProvider {

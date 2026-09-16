@@ -33,8 +33,10 @@ export type KnownVendorProvider = (typeof KNOWN_VENDOR_PROVIDERS)[number];
  *
  * Resolution order for a given service type:
  *   1. an admin-pinned provider stored in the `vendorconfigs` collection, or
- *   2. the global `VENDOR_PROVIDER` env default, or
- *   3. the `mock` provider as a last resort.
+ *   2. the per-service default (DATA routes to `pairgate` whenever the
+ *      Pairgate provider is configured), or
+ *   3. the global `VENDOR_PROVIDER` env default, or
+ *   4. the `mock` provider as a last resort.
  *
  * The persisted policy is loaded once at startup and updated in memory as soon
  * as an admin changes it (`setProvider`), so purchases are routed correctly
@@ -100,6 +102,24 @@ export class VendorService implements OnModuleInit {
     this.providers.set(provider.name, provider);
   }
 
+  /**
+   * Default provider for a service type before any admin pin exists. DATA
+   * defaults to Pairgate (the data provider) whenever it is registered and
+   * configured with a PAIRGATE_API_KEY; every other service keeps the global
+   * `VENDOR_PROVIDER` env default. Falls back to the global default so a
+   * keyless dev/CI box still boots on mock/vtpass DATA plans.
+   */
+  private defaultProviderFor(service: ServiceType): string {
+    if (
+      service === ServiceType.DATA &&
+      this.providers.has('pairgate') &&
+      this.pairgateProvider.isConfigured()
+    ) {
+      return 'pairgate';
+    }
+    return this.defaultProviderName;
+  }
+
   /** Reload the persisted routing policy at most once per TTL window. */
   private async refreshConfigIfStale(): Promise<void> {
     if (Date.now() - this.lastConfigRefresh < VendorService.CONFIG_REFRESH_TTL_MS) {
@@ -120,27 +140,51 @@ export class VendorService implements OnModuleInit {
       ? env
       : 'mock';
 
+    const pairgateActive = this.pairgateProvider.isConfigured();
     const docs = await this.configModel.find().lean();
+
+    // Pairgate is now the default data provider. Deployments that auto-seeded
+    // DATA to the old global default (e.g. VTPass) get their DATA routing
+    // re-rolled to pairgate on the next boot, so the switch takes effect
+    // without an admin action. A DATA row pinned to anything other than that
+    // default is an explicit choice and is left untouched.
     for (const doc of docs) {
-      this.configByService.set(doc.service, doc.provider);
+      let provider = doc.provider;
+      if (
+        doc.service === ServiceType.DATA &&
+        pairgateActive &&
+        provider === this.defaultProviderName &&
+        provider !== 'pairgate'
+      ) {
+        provider = 'pairgate';
+        await this.configModel.updateOne(
+          { service: doc.service },
+          { $set: { service: doc.service, provider } },
+        );
+        this.logger.log(
+          'Upgraded DATA vendor routing to pairgate (the default data provider)',
+        );
+      }
+      this.configByService.set(doc.service, provider);
     }
 
     // Seed a routing rule for every service that has none yet, so the persisted
-    // policy is always complete and the dashboard reflects every service.
+    // policy is always complete and the dashboard reflects every service. DATA
+    // gets Pairgate (when configured); every other service keeps the global
+    // `VENDOR_PROVIDER` env default.
     const missing = Object.values(ServiceType).filter(
       (s) => !this.configByService.has(s),
     );
     for (const service of missing) {
+      const provider = this.defaultProviderFor(service);
       try {
         await this.configModel.updateOne(
           { service },
-          { $set: { service, provider: this.defaultProviderName } },
+          { $set: { service, provider } },
           { upsert: true },
         );
-        this.configByService.set(service, this.defaultProviderName);
-        this.logger.log(
-          `Seeded default vendor "${this.defaultProviderName}" for ${service}`,
-        );
+        this.configByService.set(service, provider);
+        this.logger.log(`Seeded default vendor "${provider}" for ${service}`);
       } catch (err: any) {
         this.logger.warn(
           `Could not seed default vendor for ${service}: ${String(err?.message ?? err)}`,
@@ -150,8 +194,10 @@ export class VendorService implements OnModuleInit {
 
     // A deployment that boots with DATA already routed to pairgate should ship
     // with Pairgate's plan list (not wait for an admin to flip the switch).
-    const dataProvider = this.configByService.get(ServiceType.DATA) ?? this.defaultProviderName;
-    if (dataProvider === 'pairgate' && this.pairgateProvider.isConfigured()) {
+    const dataProvider =
+      this.configByService.get(ServiceType.DATA) ??
+      this.defaultProviderFor(ServiceType.DATA);
+    if (dataProvider === 'pairgate' && pairgateActive) {
       this.syncDataFrom('pairgate');
     }
   }
@@ -162,7 +208,7 @@ export class VendorService implements OnModuleInit {
     if (pinned && this.providers.has(pinned)) {
       return this.providers.get(pinned)!;
     }
-    const fallback = this.providers.get(this.defaultProviderName);
+    const fallback = this.providers.get(this.defaultProviderFor(service));
     return fallback ?? this.providers.get('mock')!;
   }
 

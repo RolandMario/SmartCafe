@@ -63,7 +63,7 @@ The app's core functionality depends on these providers and platforms:
 |---|---|---|
 | **VTPass** | Fulfils airtime, data, cable TV, electricity, WAEC, and SMS orders | `VTPassProvider` adapter (`VENDOR_PROVIDER=vtpass`), authenticated via `VTPASS_API_KEY`, `VTPASS_SECRET_KEY`, `VTPASS_PUBLIC_KEY` env vars; sandbox `https://sandbox.vtpass.com/api`, live `https://vtpass.com/api` |
 | **eBulkSMS** | Bulk SMS delivery (sender-ID campaigns) | `EbulksmsProvider` adapter, `EBULK_USERNAME` + `EBULK_API_KEY` env vars |
-| **Pairgate** | Data bundle fulfilment (CG / SME / Gifting / AWOOF) | `PairgateProvider` adapter (`VENDOR_PROVIDER=pairgate` or per-service pin), Bearer auth via `PAIRGATE_API_KEY`; base `https://pairgate.com/api/v1`; switching the DATA routing re-seeds the catalog with Pairgate plans |
+| **Pairgate** | Data bundle fulfilment (CG / SME / Gifting / AWOOF) | `PairgateProvider` adapter (`VENDOR_PROVIDER=pairgate` or the default DATA provider — DATA routes to it automatically when `PAIRGATE_API_KEY` is set), Bearer auth via `PAIRGATE_API_KEY`; base `https://pairgate.com/api/v1`; switching the DATA routing re-seeds the catalog with Pairgate plans |
 | **Monnify** | Wallet funding checkout (card, bank transfer, USSD) | `MONNIFY_*` env vars; hosted checkout + signed webhook at `/api/funding/webhook/monnify` |
 | **Paystack** | Wallet funding checkout (alternative gateway) | `PAYSTACK_SECRET_KEY` env var; hosted checkout + signed webhook at `/api/funding/webhook/paystack` |
 | **MongoDB Atlas** | Hosted database (replica set enables atomic transactions) | `MONGODB_URI` in `backend/.env` |
