@@ -133,6 +133,17 @@ Includes: dashboard (volume/commission by service), transaction management with 
    VTPass plan list. Purchases made in the brief sync window may fail until the new
    plans land (they are refunded automatically).
 
+> **Important — which backend to switch on.** The **admin dashboard, the mobile app,
+> and the backend must talk to the same API**. Both apps default to the hosted API
+> (`https://smart-cafe-bay.vercel.app/api`, see `admin/.env` and `mobile/.env`), so
+> switching Provider routing on a *local* backend has no effect on a phone hitting the
+> *hosted* API. For live use, deploy this code to the hosted API (and set
+> `PAIRGATE_BASE_URL` / `PAIRGATE_API_KEY` in its environment), then switch DATA on the
+> hosted admin. For local testing, point **both** `mobile/.env`
+> (`EXPO_PUBLIC_API_URL`) and `admin/.env` (`NEXT_PUBLIC_API_URL`) at your local
+> backend. Routing changes propagated to Mongo are picked up by instances within
+> ~5 seconds, so purchases always hit the provider you selected.
+
 ## Payment gateways: Monnify & Paystack (wallet funding)
 
 Wallet top-ups run through a **hosted checkout** (card, bank transfer, USSD). Two

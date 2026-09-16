@@ -53,6 +53,14 @@ export class VendorService implements OnModuleInit {
   /** Global fallback provider name from the `VENDOR_PROVIDER` env var. */
   private defaultProviderName: string = 'mock';
 
+  /**
+   * How often to reconcile the in-memory routing map with Mongo. Lets an admin
+   * change made on another instance (or a cold start) take effect here within
+   * seconds, so purchases never debit the wrong provider's account.
+   */
+  private static readonly CONFIG_REFRESH_TTL_MS = 5000;
+  private lastConfigRefresh = 0;
+
   constructor(
     private readonly config: ConfigService,
     @InjectModel(VendorConfig.name) private configModel: Model<VendorConfig>,
@@ -70,6 +78,20 @@ export class VendorService implements OnModuleInit {
 
   private register(provider: VendorProvider) {
     this.providers.set(provider.name, provider);
+  }
+
+  /** Reload the persisted routing policy at most once per TTL window. */
+  private async refreshConfigIfStale(): Promise<void> {
+    if (Date.now() - this.lastConfigRefresh < VendorService.CONFIG_REFRESH_TTL_MS) {
+      return;
+    }
+    const docs = await this.configModel.find().lean();
+    for (const doc of docs) {
+      if (this.providers.has(doc.provider)) {
+        this.configByService.set(doc.service, doc.provider);
+      }
+    }
+    this.lastConfigRefresh = Date.now();
   }
 
   async onModuleInit() {
@@ -161,7 +183,8 @@ export class VendorService implements OnModuleInit {
     });
   }
 
-  getVendorOverview() {
+  async getVendorOverview() {
+    await this.refreshConfigIfStale();
     return {
       globalDefault: this.defaultProviderName,
       providers: this.getProviderCapabilities(),
@@ -193,7 +216,7 @@ export class VendorService implements OnModuleInit {
     // when enabled, the VTPass plan list (or static seed) when disabled.
     if (service === ServiceType.DATA && previous !== provider) {
       if (provider === 'pairgate') {
-        this.syncDataFrom('pairgate');
+        this.syncDataFrom('pairgate', previous);
       } else if (previous === 'pairgate') {
         this.syncDataFrom('vtpass');
       }
@@ -206,21 +229,46 @@ export class VendorService implements OnModuleInit {
    * Pairgate throttles requests (~1-2s), so the sync runs off the hot path and
    * the admin PATCH returns immediately; the plan list lands shortly after.
    */
-  private syncDataFrom(source: 'pairgate' | 'vtpass'): void {
-    void this.syncDataPlans(source).catch((err: any) => {
+  private syncDataFrom(source: 'pairgate' | 'vtpass', previousProvider?: string): void {
+    void this.syncDataPlans(source, previousProvider).catch((err: any) => {
       this.logger.warn(
         `[catalog] background DATA re-seed from ${source} failed: ${String(err?.message ?? err)}`,
       );
     });
   }
 
-  private async syncDataPlans(source: 'pairgate' | 'vtpass'): Promise<void> {
-    const rows: DataPlanRow[] =
-      source === 'pairgate'
-        ? await this.pairgateProvider.fetchAllDataPlans()
-        : await this.vtpassProvider.fetchAllDataPlans();
+  private async syncDataPlans(
+    source: 'pairgate' | 'vtpass',
+    previousProvider?: string,
+  ): Promise<void> {
+    let rows: DataPlanRow[] = [];
+    try {
+      rows =
+        source === 'pairgate'
+          ? await this.pairgateProvider.fetchAllDataPlans()
+          : await this.vtpassProvider.fetchAllDataPlans();
+    } catch (err: any) {
+      this.logger.warn(
+        `[catalog] ${source} DATA fetch failed: ${String(err?.message ?? err)}`,
+      );
+    }
     if (!rows.length) {
-      this.logger.warn(`[catalog] ${source} returned no DATA plans — catalog left untouched`);
+      if (source === 'pairgate' && previousProvider && previousProvider !== 'pairgate') {
+        // Pairgate produced no plans — don't leave DATA pointed at a provider
+        // whose plans aren't in the catalog (every purchase would fail). Revert
+        // the routing to what it was before the switch.
+        this.logger.warn(
+          `[catalog] Pairgate returned no DATA plans — reverting DATA routing to "${previousProvider}"`,
+        );
+        this.configByService.set(ServiceType.DATA, previousProvider);
+        await this.configModel.updateOne(
+          { service: ServiceType.DATA },
+          { $set: { service: ServiceType.DATA, provider: previousProvider } },
+          { upsert: true },
+        );
+      } else {
+        this.logger.warn(`[catalog] ${source} returned no DATA plans — catalog left untouched`);
+      }
       return;
     }
     const { synced, removed } = await this.catalogSync.replaceDataCatalog(rows);
@@ -230,6 +278,7 @@ export class VendorService implements OnModuleInit {
   }
 
   async buy(order: VendorOrder): Promise<VendorResult> {
+    await this.refreshConfigIfStale();
     const provider = this.getProvider(order.serviceType);
     switch (order.serviceType) {
       case ServiceType.AIRTIME:
@@ -259,11 +308,13 @@ export class VendorService implements OnModuleInit {
     }
   }
 
-  requery(params: RequeryParams): Promise<VendorResult> {
+  async requery(params: RequeryParams): Promise<VendorResult> {
+    await this.refreshConfigIfStale();
     return this.getProvider(params.serviceType).requery(params);
   }
 
-  verifyCustomer(params: VerifyParams): Promise<CustomerVerification> {
+  async verifyCustomer(params: VerifyParams): Promise<CustomerVerification> {
+    await this.refreshConfigIfStale();
     return this.getProvider(params.serviceType).verifyCustomer(params);
   }
 
@@ -273,6 +324,7 @@ export class VendorService implements OnModuleInit {
    * no price catalogue (or the lookup fails).
    */
   async getProviderPrice(params: ProviderPriceItem): Promise<number | null> {
+    await this.refreshConfigIfStale();
     const provider = this.getProvider(params.serviceType);
     if (!provider.getProviderPrice) return null;
     try {
@@ -288,6 +340,7 @@ export class VendorService implements OnModuleInit {
   /** Balance of the global/default provider (kept for backwards-compat). */
   async getBalance(): Promise<{ balance: number; currency: string }> {
     try {
+      await this.refreshConfigIfStale();
       const provider = this.providers.get(this.defaultProviderName);
       return provider
         ? await provider.getBalance()
@@ -301,6 +354,7 @@ export class VendorService implements OnModuleInit {
   async getBalances(): Promise<
     { provider: string; balance: number; currency: string }[]
   > {
+    await this.refreshConfigIfStale();
     const out: { provider: string; balance: number; currency: string }[] = [];
     for (const [name, provider] of this.providers) {
       try {
