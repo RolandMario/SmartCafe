@@ -6,13 +6,14 @@ import { CatalogItem } from './schemas/catalog-item.schema';
 import { DataPlanRow } from './data-plan-sync';
 
 /**
- * Replaces the DATA catalog with a vendor's current plan list (used when the
- * admin routes DATA to a different vendor):
+ * Replaces the entire DATA catalog with a vendor's current plan list (used when
+ * the admin routes DATA to a different vendor):
  *   - pairgate  -> upsert Pairgate plans (productCode = pairgate plan_id)
  *   - vtpass    -> upsert VTPass variation plans (productCode = variation_code)
  *   - mock      -> upsert the bundled static DATA seed
- * Rows for a provider whose vendor codes are no longer sold are pruned, exactly
- * like the seed script does at boot.
+ * Rows from the previous vendor that are NOT part of the fresh listing (stale
+ * codes AND providers the new vendor doesn't serve) are pruned, so the catalog
+ * is never left "mixed" with plans the active provider can't fulfil.
  */
 @Injectable()
 export class CatalogSyncService {
@@ -23,8 +24,8 @@ export class CatalogSyncService {
   async replaceDataCatalog(
     rows: DataPlanRow[],
   ): Promise<{ synced: number; removed: number }> {
-    // Group by provider so stale rows are only pruned where we actually have a
-    // fresh listing (a failed fetch for one network never wipes its catalog).
+    // Group by provider so the fresh listing is upserted once per code and the
+    // authoritative code set per provider is known for pruning.
     const byProvider = new Map<string, DataPlanRow[]>();
     for (const row of rows) {
       if (!row?.provider || !row?.productCode) continue;
@@ -72,6 +73,24 @@ export class CatalogSyncService {
         service: ServiceType.DATA,
         provider,
         productCode: { $nin: [...byCode.keys()] },
+      });
+      removed += deleted.deletedCount ?? 0;
+    }
+
+    // Full replacement: providers that have NO rows in the fresh listing (a
+    // network the new vendor doesn't serve, or one whose fetch failed this run)
+    // are wiped as well, so the catalog never ends up mixed with plans from the
+    // previous vendor. A surviving stale plan would be shown to customers and
+    // fail at purchase because the active provider doesn't recognise its code.
+    const activeProviders = new Set(byProvider.keys());
+    const storedProviders: string[] = await this.catalogModel.distinct('provider', {
+      service: ServiceType.DATA,
+    });
+    for (const provider of storedProviders) {
+      if (activeProviders.has(provider)) continue;
+      const deleted = await this.catalogModel.deleteMany({
+        service: ServiceType.DATA,
+        provider,
       });
       removed += deleted.deletedCount ?? 0;
     }
