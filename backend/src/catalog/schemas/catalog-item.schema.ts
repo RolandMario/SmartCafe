@@ -38,6 +38,15 @@ export class CatalogItem extends Document {
   @Prop({ type: Number })
   unitPrice?: number;
 
+  /**
+   * Vendor that fulfils this product ('pairgate' | 'vtpass' | 'static'). The
+   * DATA catalog holds every vendor's plan list side by side — purchases debit
+   * the plan's OWN vendor account, and the admin can hide/show each plan with
+   * the `active` toggle.
+   */
+  @Prop({ type: String, enum: ['pairgate', 'vtpass', 'static'], default: 'static' })
+  vendor?: string;
+
   /** Vendor's charge per unit (SMS) — used for profit reports when the SMS API exposes no unit price. */
   @Prop({ type: Number })
   providerUnitCost?: number;
@@ -59,3 +68,5 @@ export class CatalogItem extends Document {
 export const CatalogItemSchema = SchemaFactory.createForClass(CatalogItem);
 CatalogItemSchema.index({ service: 1, provider: 1 });
 CatalogItemSchema.index({ service: 1, active: 1, sortOrder: 1 });
+// Compound lookup key used by the catalog re-seed (upsert filter + $nin pruning).
+CatalogItemSchema.index({ service: 1, provider: 1, productCode: 1, vendor: 1 });

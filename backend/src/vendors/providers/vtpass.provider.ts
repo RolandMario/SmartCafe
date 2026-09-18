@@ -503,6 +503,7 @@ export class VtpassProvider implements VendorProvider {
           provider: svc.provider,
           providerLabel: svc.providerLabel,
           productCode: code,
+          vendor: 'vtpass' as const,
           name: plan.name,
           amount: plan.amount,
           validityDays: dataValidityDays(plan.name, code) ?? 30,

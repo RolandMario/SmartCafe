@@ -308,7 +308,7 @@ export class AdminService {
    * current API price (VTPass service-variations / mock simulation / SMS admin rate).
    */
   private async buildMargins() {
-    const items = await this.catalogService.adminList({});
+    const { items } = await this.catalogService.adminList({ perPage: 500 });
     const wanted = items.filter(
       (i) => i.active && PROFIT_MARGIN_SERVICES.includes(i.service),
     );
@@ -336,6 +336,7 @@ export class AdminService {
           providerPrice = await this.vendorService.getProviderPrice({
             serviceType: item.service,
             productCode: item.productCode,
+            vendor: item.vendor ?? undefined,
             amount: item.amount,
           });
         }

@@ -9,6 +9,9 @@ export interface VendorOrder {
   /** Vendor/catalog provider key (e.g. 'MTN', 'GLO') — used by providers whose
    *  APIs key products by network (e.g. pairgate's provider_id slug). */
   provider?: string;
+  /** Fulfilling vendor ('pairgate' | 'vtpass'): DATA plans debit THEIR own
+   *  vendor's account. Falls back to the pinned DATA provider when absent. */
+  vendor?: string;
   amount?: number;
   /** Number of units to buy (WAEC registration PINs etc.). Defaults to 1. */
   quantity?: number;
@@ -42,6 +45,8 @@ export interface ProviderPriceItem {
   serviceType: ServiceType;
   /** Product / variation code (data plans, cable packages, WAEC/JAMB product codes). */
   productCode?: string;
+  /** For DATA, the plan's own vendor — routes the price lookup to the right adapter. */
+  vendor?: string;
   /** Sales-side price — the provider may fall back on it when its catalogue has no entry. */
   amount?: number;
   /** Per-unit sales price (SMS etc.). */

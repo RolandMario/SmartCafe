@@ -65,6 +65,25 @@ export class CatalogService {
   async adminList(query: QueryCatalogDto) {
     const filter: Record<string, any> = {};
     if (query.service) filter.service = query.service;
-    return this.catalogModel.find(filter).sort({ service: 1, sortOrder: 1, createdAt: 1 });
+
+    // Server-side pagination — the DATA catalog now holds every vendor's plans
+    // (can be several hundred rows), so the admin dashboard pages 15 at a time.
+    const page = Math.max(query.page ?? 1, 1);
+    const perPage = Math.min(Math.max(query.perPage ?? 15, 1), 200);
+    const [total, items] = await Promise.all([
+      this.catalogModel.countDocuments(filter),
+      this.catalogModel
+        .find(filter)
+        .sort({ service: 1, sortOrder: 1, createdAt: 1 })
+        .skip((page - 1) * perPage)
+        .limit(perPage),
+    ]);
+    return {
+      items,
+      total,
+      page,
+      perPage,
+      totalPages: Math.max(Math.ceil(total / perPage), 1),
+    };
   }
 }

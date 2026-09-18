@@ -125,7 +125,7 @@ export class AdminController {
 
   @Post('vendors/refresh-data')
   @ApiOperation({
-    summary: 'Re-seed the DATA catalog from the active data provider (pairgate/vtpass)',
+    summary: 'Re-seed the combined DATA catalog from every configured data vendor (pairgate + vtpass)',
   })
   refreshVendorData() {
     return this.vendorService.refreshDataSync();

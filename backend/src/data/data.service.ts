@@ -35,12 +35,18 @@ export class DataService {
       meta: {
         provider: item.provider,
         providerLabel: item.providerLabel,
+        vendor: item.vendor ?? null,
         plan: item.name,
         productCode: item.productCode,
         phone: dto.phone,
         amount: item.amount,
       },
-      order: { productCode: item.productCode, provider: item.provider, phone: dto.phone },
+      order: {
+        productCode: item.productCode,
+        provider: item.provider,
+        vendor: item.vendor ?? undefined,
+        phone: dto.phone,
+      },
       pin: dto.pin,
     });
   }

@@ -12,6 +12,8 @@ export interface DataPlanRow {
   providerLabel: string;
   /** Vendor plan id (pairgate plan_id / VTPass variation code). */
   productCode: string;
+  /** Vendor that fulfils this plan (its account is debited on purchase). */
+  vendor: 'pairgate' | 'vtpass' | 'static';
   name: string;
   /** Provider's price (becomes the catalog `amount`). */
   amount: number;
@@ -99,6 +101,7 @@ export function staticDataPlanRows(): DataPlanRow[] {
       provider: item.provider,
       providerLabel: item.providerLabel,
       productCode: item.productCode,
+      vendor: 'static' as const,
       name: item.name,
       amount: item.amount ?? 0,
       validityDays: item.validityDays,

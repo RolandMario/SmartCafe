@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -19,6 +20,21 @@ export class QueryCatalogDto {
   @IsOptional()
   @IsEnum(ServiceType)
   service?: ServiceType;
+
+  @ApiPropertyOptional({ description: 'One-based page number (admin list).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: 'Rows per page (admin list, default 15).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(200)
+  perPage?: number;
 }
 
 export class CreateCatalogItemDto {

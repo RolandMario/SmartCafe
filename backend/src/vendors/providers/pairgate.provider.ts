@@ -61,9 +61,26 @@ export class PairgateProvider implements VendorProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  /** Pacing between catalog requests (Pairgate's rate window is ~1-2s). */
-  private static readonly REQUEST_PACING_MS = 3000;
-  private static readonly MAX_RETRIES = 6;
+  /**
+   * Pacing between catalog requests. Pairgate rate-limits per API key with a
+   * ~2s window (measured live: 2.0s spacing is clean, 1.5s trips the limiter).
+   * The 429 body's own instruction is a broken placeholder ("Please wait 0
+   * seconds before retrying"), so apiGet() waits out the window itself and
+   * retries.
+   */
+  private static readonly REQUEST_PACING_MS = 2000;
+
+  /** Retry attempts when Pairgate answers 429 — each waits out the window. */
+  private static readonly MAX_RETRIES = 4;
+
+  /** Extra seconds tacked onto a 429 retry so it lands behind the limiter. */
+  private static readonly RATE_LIMIT_RETRY_MS = 600;
+
+  /** Retry passes for combos the rate limiter blocked (each lets the window slide). */
+  private static readonly PASS_RETRIES = 4;
+
+  /** Rest between retry passes — escalating so a tripped limiter recovers. */
+  private static readonly PASS_BACKOFF_MS = [4000, 9000, 15000, 25000];
 
   /** Timestamp of the last Pairgate request — used to guarantee pacing. */
   private lastRequestAt = 0;
@@ -101,6 +118,37 @@ export class PairgateProvider implements VendorProvider {
     return 0;
   }
 
+  /**
+   * True when a reply is Pairgate's rate-limit body — possibly on HTTP 200
+   * (code 201 / status "error" / "Please wait N seconds").
+   */
+  private isRateLimitError(payload: any): boolean {
+    if (!payload || typeof payload !== 'object') return false;
+    const status = String(payload.status ?? '');
+    const code = Number(payload.code ?? payload.statusCode ?? NaN);
+    return (
+      status === 'error' &&
+      (code === 429 || code === 201 || this.rateLimitWait(payload) > 0)
+    );
+  }
+
+  /**
+   * Wait out Pairgate's per-key rate-limit window before a retry. The 429 body
+   * says "Please wait 0 seconds" (placeholder), so wait until REQUEST_PACING_MS
+   * has elapsed since the refused request and then some — measured live, the
+   * limiter lets a request through ~2s after the previous one.
+   */
+  private async rateLimitCooldown(): Promise<void> {
+    const sinceLast = Date.now() - this.lastRequestAt;
+    const wait = Math.max(
+      PairgateProvider.REQUEST_PACING_MS +
+        PairgateProvider.RATE_LIMIT_RETRY_MS -
+        sinceLast,
+      1500,
+    );
+    await delay(wait);
+  }
+
   /** Guarantee at least REQUEST_PACING_MS between two consecutive Pairgate requests. */
   private async pace(): Promise<void> {
     const since = Date.now() - this.lastRequestAt;
@@ -118,18 +166,17 @@ export class PairgateProvider implements VendorProvider {
       await this.pace();
       try {
         const { data } = await this.client.get(path, { params, timeout: 20000 });
-        const wait = this.rateLimitWait(data);
-        if (wait > 0 && attempts < PairgateProvider.MAX_RETRIES) {
-          await delay((wait + 1) * 1000);
+        if (this.isRateLimitError(data) && attempts < PairgateProvider.MAX_RETRIES) {
+          await this.rateLimitCooldown();
           continue;
         }
         return data;
       } catch (err: any) {
-        const wait =
-          this.rateLimitWait(err?.response?.data) ||
-          (err?.response?.status === 429 ? 3 : 0);
-        if (wait > 0 && attempts < PairgateProvider.MAX_RETRIES) {
-          await delay((wait + 1) * 1000);
+        const rateLimited =
+          this.rateLimitWait(err?.response?.data) > 0 ||
+          err?.response?.status === 429;
+        if (rateLimited && attempts < PairgateProvider.MAX_RETRIES) {
+          await this.rateLimitCooldown();
           continue;
         }
         // Only transient (no server reply) errors are worth retrying.
@@ -209,30 +256,49 @@ export class PairgateProvider implements VendorProvider {
     }
 
     const rows: DataPlanRow[] = [];
-    for (const combo of combos) {
-      // Pacing happens inside apiGet (paces every request + retries).
-      try {
-        const plans = await this.getDataPlans(combo.slug, combo.planType);
-        for (const plan of plans) {
-          rows.push({
-            provider:
-              PairgateProvider.SLUG_TO_PROVIDER[combo.slug] ??
-              combo.slug.toUpperCase(),
-            providerLabel: combo.providerLabel,
-            productCode: plan.planId,
-            name: plan.name,
-            amount: plan.price,
-            validityDays:
-              Number.isFinite(plan.duration) && plan.duration > 0
-                ? plan.duration
-                : 30,
-            description: `Pairgate ${combo.planType}`,
-          });
+    // Two-phase fetch: a first paced pass over every combo, then retry passes
+    // (with escalating backoff) for the combos the vendor's rate limiter tripped.
+    // Retrying later lets the per-key window slide, so a network's plans are
+    // never missing from the catalog just because of a 429 spell.
+    let pending: typeof combos = [...combos];
+    let pass = 0;
+    while (pending.length > 0 && pass <= PairgateProvider.PASS_RETRIES) {
+      const failed: typeof combos = [];
+      for (const combo of pending) {
+        try {
+          const plans = await this.getDataPlans(combo.slug, combo.planType);
+          for (const plan of plans) {
+            rows.push({
+              provider:
+                PairgateProvider.SLUG_TO_PROVIDER[combo.slug] ??
+                combo.slug.toUpperCase(),
+              providerLabel: combo.providerLabel,
+              productCode: plan.planId,
+              vendor: 'pairgate' as const,
+              name: plan.name,
+              amount: plan.price,
+              validityDays:
+                Number.isFinite(plan.duration) && plan.duration > 0
+                  ? plan.duration
+                  : 30,
+              description: `Pairgate ${combo.planType}`,
+            });
+          }
+        } catch (err: any) {
+          this.logger.warn(
+            `Pairgate plan fetch ${combo.slug}/${combo.planType} failed (pass ${pass + 1}): ${String(err?.message ?? err)}`,
+          );
+          failed.push(combo);
         }
-      } catch (err: any) {
+      }
+      pending = failed;
+      pass++;
+      if (pending.length > 0 && pass <= PairgateProvider.PASS_RETRIES) {
+        const wait = PairgateProvider.PASS_BACKOFF_MS[pass - 1] ?? 15000;
         this.logger.warn(
-          `Pairgate plan fetch ${combo.slug}/${combo.planType} failed: ${String(err?.message ?? err)}`,
+          `Pairgate: ${pending.length} plan list(s) rate-limited — retrying in ${Math.round(wait / 1000)}s`,
         );
+        await delay(wait);
       }
     }
     return rows;
