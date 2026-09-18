@@ -10,6 +10,7 @@ import { QueryTransactionsDto } from '../transactions/dto/transactions.dto';
 import { ServiceType } from '../common/enums';
 
 export type ProfitRange = 'today' | '7d' | '30d' | 'all';
+export type DataPlanRange = '7d' | '30d' | '90d' | 'all';
 
 /** Services whose products have fixed provider prices (live-margin lookups). */
 const PROFIT_MARGIN_SERVICES = [
@@ -102,6 +103,119 @@ export class AdminService {
       recent,
       vendorProvider: this.vendorService.getProviderName(),
       vendorConfigs: this.vendorService.getEffectiveConfig(),
+    };
+  }
+
+  /**
+   * Data plan purchase trends over time (successful DATA transactions only):
+   *  - `series` — one bucket per day (or per month for `all`) with a per-plan
+   *    count + revenue breakdown;
+   *  - `plans`  — per-plan totals across the period, sorted by purchase count;
+   *  - `totals` — combined count + revenue for the period.
+   * Lets admins see which bundles people buy most (count) and which generate
+   * the most revenue (price), and how that changes over time.
+   */
+  async dataPlanSales(rawRange?: string) {
+    const range: DataPlanRange =
+      rawRange === '7d' || rawRange === '30d' || rawRange === '90d' || rawRange === 'all'
+        ? rawRange
+        : '30d';
+
+    const now = new Date();
+    let since: Date | null = null;
+    if (range === '7d') {
+      since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (range === '30d') {
+      since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    } else if (range === '90d') {
+      since = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    }
+
+    const match: Record<string, any> = { service: ServiceType.DATA, status: 'success' };
+    if (since) match.createdAt = { $gte: since };
+
+    // Daily buckets for short ranges, monthly for "all time" (keeps the chart readable).
+    const bucketFormat = range === 'all' ? '%Y-%m' : '%Y-%m-%d';
+
+    type PlanRow = {
+      bucket: string;
+      key: string;
+      network: string;
+      plan: string;
+      count: number;
+      revenue: number;
+    };
+    const rows: PlanRow[] = await this.txModel.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            bucket: {
+              $dateToString: { format: bucketFormat, date: '$createdAt', timezone: 'Africa/Lagos' },
+            },
+            // Stable plan identity (survives catalog re-seeds); falls back to
+            // the plan name and finally to 'unknown' for very old records.
+            key: { $ifNull: ['$meta.productCode', '$meta.plan', 'unknown'] },
+          },
+          network: { $first: { $toString: { $ifNull: ['$meta.providerLabel', ''] } } },
+          plan: { $first: { $toString: { $ifNull: ['$meta.plan', ''] } } },
+          count: { $sum: 1 },
+          revenue: { $sum: '$amount' },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          bucket: '$_id.bucket',
+          key: '$_id.key',
+          network: 1,
+          plan: 1,
+          count: 1,
+          revenue: 1,
+        },
+      },
+    ]);
+
+    const planTotals = new Map<string, { key: string; label: string; count: number; revenue: number }>();
+    const seriesMap = new Map<
+      string,
+      { bucket: string; count: number; revenue: number; plans: Record<string, { count: number; revenue: number }> }
+    >();
+    const trim = (s: string) => (s.trim() ? s : null);
+
+    for (const row of rows) {
+      const label = [trim(row.network), trim(row.plan)].filter(Boolean).join(' · ') || row.key;
+      const plan = planTotals.get(row.key) ?? { key: row.key, label, count: 0, revenue: 0 };
+      plan.count += row.count;
+      plan.revenue += row.revenue;
+      planTotals.set(row.key, plan);
+
+      const point = seriesMap.get(row.bucket) ?? { bucket: row.bucket, count: 0, revenue: 0, plans: {} };
+      point.count += row.count;
+      point.revenue += row.revenue;
+      point.plans[row.key] = { count: row.count, revenue: row.revenue };
+      seriesMap.set(row.bucket, point);
+    }
+
+    const plans = [...planTotals.values()]
+      .map((p) => ({ ...p, revenue: round2(p.revenue) }))
+      .sort((a, b) => b.count - a.count || b.revenue - a.revenue);
+
+    const series = [...seriesMap.values()]
+      .sort((a, b) => a.bucket.localeCompare(b.bucket))
+      .map((p) => ({ ...p, revenue: round2(p.revenue) }));
+
+    const totals = series.reduce(
+      (acc, p) => ({ count: acc.count + p.count, revenue: acc.revenue + p.revenue }),
+      { count: 0, revenue: 0 },
+    );
+
+    return {
+      range,
+      since: since?.toISOString() ?? null,
+      totals: { ...totals, revenue: round2(totals.revenue) },
+      series,
+      plans,
     };
   }
 

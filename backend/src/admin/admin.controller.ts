@@ -104,6 +104,15 @@ export class AdminController {
     return this.adminService.profits(range);
   }
 
+  @Get('data-plan-sales')
+  @ApiOperation({
+    summary:
+      'Data plan sales over time (successful DATA purchases by plan — count + revenue)',
+  })
+  dataPlanSales(@Query('range') range?: string) {
+    return this.adminService.dataPlanSales(range);
+  }
+
   // ---------------- Vendors ----------------
   @Get('vendors')
   @ApiOperation({ summary: 'List vendor providers and per-service routing' })
