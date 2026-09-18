@@ -79,6 +79,15 @@ export class CreateCatalogItemDto {
   @Min(0)
   amount?: number;
 
+  @ApiPropertyOptional({
+    enum: ['pairgate', 'vtpass', 'static'],
+    description:
+      "Fulfilling vendor ('pairgate' | 'vtpass' | 'static') — dictates which vendor account is debited on purchase.",
+  })
+  @IsOptional()
+  @IsIn(['pairgate', 'vtpass', 'static'])
+  vendor?: 'pairgate' | 'vtpass' | 'static';
+
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

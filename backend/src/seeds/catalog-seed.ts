@@ -10,6 +10,9 @@ export interface SeedItem {
   unitPrice?: number;
   validityDays?: number;
   sortOrder?: number;
+  commission?: number;
+  /** Fulfilling vendor for DATA plans — legacy/static rows default to 'static'. */
+  vendor?: 'pairgate' | 'vtpass' | 'static';
 }
 
 export const CATALOG_SEED: SeedItem[] = [

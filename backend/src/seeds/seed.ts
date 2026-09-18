@@ -81,7 +81,14 @@ async function seedCatalog() {
   for (const item of CATALOG_SEED) {
     const result = await CatalogItem.updateOne(
       { service: item.service, provider: item.provider, productCode: item.productCode },
-      { $set: item as SeedItem & { active: boolean; commission: number } },
+      {
+        $set: {
+          ...(item as SeedItem),
+          vendor: (item as SeedItem).vendor ?? 'static',
+          active: true,
+          commission: item.commission ?? 0,
+        },
+      },
       { upsert: true },
     );
     if (result.upsertedCount) created++;

@@ -11,11 +11,18 @@ export class CatalogService {
     @InjectModel(CatalogItem.name) private catalogModel: Model<CatalogItem>,
   ) {}
 
-  /** Public listing — active items only, optionally filtered by service */
+  /** Public listing — active items only, optionally filtered by service / vendor */
   async list(query: QueryCatalogDto) {
     const filter: Record<string, any> = { active: true };
     if (query.service) filter.service = query.service;
-    if (query.vendor) filter.vendor = query.vendor;
+    if (query.vendor) {
+      // Legacy rows (static seed, pre-vendor era) carry no `vendor` field — treat as 'static'.
+      if (query.vendor === 'static') {
+        filter.$or = [{ vendor: 'static' }, { vendor: { $exists: false } }];
+      } else {
+        filter.vendor = query.vendor;
+      }
+    }
     return this.catalogModel.find(filter).sort({ service: 1, sortOrder: 1, createdAt: 1 });
   }
 
@@ -66,7 +73,14 @@ export class CatalogService {
   async adminList(query: QueryCatalogDto) {
     const filter: Record<string, any> = {};
     if (query.service) filter.service = query.service;
-    if (query.vendor) filter.vendor = query.vendor;
+    if (query.vendor) {
+      // Legacy rows (static seed, pre-vendor era) carry no `vendor` field — treat as 'static'.
+      if (query.vendor === 'static') {
+        filter.$or = [{ vendor: 'static' }, { vendor: { $exists: false } }];
+      } else {
+        filter.vendor = query.vendor;
+      }
+    }
 
     // Server-side pagination — the DATA catalog now holds every vendor's plans
     // (can be several hundred rows), so the admin dashboard pages 15 at a time.
