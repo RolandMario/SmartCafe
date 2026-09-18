@@ -6,6 +6,7 @@ import {
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -20,6 +21,14 @@ export class QueryCatalogDto {
   @IsOptional()
   @IsEnum(ServiceType)
   service?: ServiceType;
+
+  @ApiPropertyOptional({
+    enum: ['pairgate', 'vtpass', 'static'],
+    description: 'Filter by fulfilling vendor (pairgate | vtpass | static).',
+  })
+  @IsOptional()
+  @IsIn(['pairgate', 'vtpass', 'static'])
+  vendor?: 'pairgate' | 'vtpass' | 'static';
 
   @ApiPropertyOptional({ description: 'One-based page number (admin list).' })
   @IsOptional()

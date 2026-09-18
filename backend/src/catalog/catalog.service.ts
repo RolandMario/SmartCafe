@@ -15,6 +15,7 @@ export class CatalogService {
   async list(query: QueryCatalogDto) {
     const filter: Record<string, any> = { active: true };
     if (query.service) filter.service = query.service;
+    if (query.vendor) filter.vendor = query.vendor;
     return this.catalogModel.find(filter).sort({ service: 1, sortOrder: 1, createdAt: 1 });
   }
 
@@ -65,6 +66,7 @@ export class CatalogService {
   async adminList(query: QueryCatalogDto) {
     const filter: Record<string, any> = {};
     if (query.service) filter.service = query.service;
+    if (query.vendor) filter.vendor = query.vendor;
 
     // Server-side pagination — the DATA catalog now holds every vendor's plans
     // (can be several hundred rows), so the admin dashboard pages 15 at a time.
