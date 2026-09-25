@@ -20,6 +20,7 @@ import {
 } from '../payments/payment-gateway.interface';
 import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
 import { User } from '../users/schemas/user.schema';
+import { DedicatedAccountService } from './dedicated-account.service';
 
 @Injectable()
 export class FundingService {
@@ -31,6 +32,7 @@ export class FundingService {
     @InjectConnection() private connection: Connection,
     private walletService: WalletService,
     private gateways: PaymentGatewayRegistry,
+    private dedicatedAccounts: DedicatedAccountService,
   ) {}
 
   /**
@@ -196,6 +198,16 @@ export class FundingService {
         `Rejected unsigned ${gateway.name} webhook (enable ${provider.toUpperCase()}_WEBHOOK_INSECURE in sandbox)`,
       );
       throw new UnauthorizedException('Missing webhook signature');
+    }
+
+    // DVA assignment events carry no payment reference — finalize the account
+    // row before the funding lookup below (which would otherwise ignore them).
+    if (
+      provider === 'paystack' &&
+      String(payload?.event ?? '').startsWith('dedicatedaccount.')
+    ) {
+      await this.dedicatedAccounts.handleAssignmentWebhook(payload);
+      return { received: true };
     }
 
     const { eventClass, providerEventType } = gateway.classifyWebhookEvent(payload);

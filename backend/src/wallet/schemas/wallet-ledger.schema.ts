@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { LedgerType } from '../../common/enums';
+import { LedgerType, PaymentWallet } from '../../common/enums';
 
 @Schema({ timestamps: true })
 export class WalletLedger extends Document {
@@ -12,6 +12,14 @@ export class WalletLedger extends Document {
 
   @Prop({ type: String, enum: LedgerType, required: true })
   type: LedgerType;
+
+  /** Which wallet this entry hits (main | cashback). */
+  @Prop({ type: String, enum: PaymentWallet, default: PaymentWallet.MAIN })
+  wallet: PaymentWallet;
+
+  /** Grouping tag, e.g. CASHBACK_EARNED, CASHBACK_USED, REFUND, FUNDING. */
+  @Prop({ type: String })
+  tag?: string;
 
   @Prop({ type: Number, required: true })
   amount: number;

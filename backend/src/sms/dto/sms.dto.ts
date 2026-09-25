@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
+  IsEnum,
   IsOptional,
   IsString,
   Matches,
@@ -11,6 +12,7 @@ import {
 } from 'class-validator';
 import { NIGERIAN_PHONE } from '../../airtime/dto/airtime.dto';
 import { TRANSACTION_PIN_REGEX } from '../../users/dto/pin.dto';
+import { PaymentWallet } from '../../common/enums';
 
 export class SendBulkSmsDto {
   @ApiProperty({ example: 'MyBrand', description: 'Alpha sender ID (3-11 alphanumeric)' })
@@ -37,6 +39,15 @@ export class SendBulkSmsDto {
   @IsString({ each: true })
   @Matches(NIGERIAN_PHONE, { each: true, message: 'All recipients must be valid Nigerian numbers' })
   recipients: string[];
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Wallet to fund the purchase from ('main' default | 'cashback').",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 
   @ApiPropertyOptional({ example: '1234', description: '4-digit transaction PIN authorising this purchase' })
   @IsOptional()

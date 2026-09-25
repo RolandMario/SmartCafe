@@ -46,6 +46,9 @@ export class WaecService {
         ...(customerData ?? {}),
       },
       order: { productCode: item.productCode, phone: user?.phone ?? '', quantity, customerData },
+      paymentWallet: dto.wallet,
+      // Commission is per PIN, so multiple registration PINs earn it per item.
+      cashback: (item.commission ?? 0) * quantity,
       pin: dto.pin,
     });
   }

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import {
   PaymentGateway,
   PaymentInitParams,
@@ -17,7 +17,12 @@ import {
   WebhookEventClass,
 } from './payment-gateway.interface';
 import {
+  PaystackCreateDedicatedAccountResponse,
+  PaystackCustomerResponse,
+  PaystackDedicatedAccountData,
+  PaystackDedicatedAccountListResponse,
   PaystackInitResponse,
+  PaystackRequeryDedicatedAccountResponse,
   PaystackVerifyResponse,
 } from './paystack.types';
 
@@ -189,5 +194,157 @@ export class PaystackService implements PaymentGateway {
       eventClass = 'failed';
     }
     return { eventClass, providerEventType: event };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dedicated Virtual Accounts (DVA)
+  // Docs: https://paystack.com/docs/api/dedicated-virtual-account/
+  //
+  // Paystack keys DVAs by CUSTOMER (not by transaction), and DVA events arrive
+  // on the same webhook URL as charge events, so these helpers sit alongside
+  // the PaymentGateway contract but are kept out of it.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Authenticated request helper. Non-2xx responses and network failures
+   * surface as `BadGatewayException` with the provider's message so callers can
+   * fall back gracefully (e.g. a 404 customer lookup → create the customer).
+   */
+  private async request<T>(config: AxiosRequestConfig): Promise<T> {
+    try {
+      const res = await this.client.request<T>({
+        ...config,
+        headers: {
+          Authorization: `Bearer ${this.secretKey()}`,
+          ...(config.headers ?? {}),
+        },
+      });
+      return res.data;
+    } catch (e) {
+      let providerMessage = e instanceof Error ? e.message : String(e);
+      if (axios.isAxiosError(e) && e.response) {
+        const msg = (e.response.data as any)?.message;
+        if (msg) providerMessage = String(msg);
+      }
+      throw new BadGatewayException(`Paystack request failed: ${providerMessage}`);
+    }
+  }
+
+  /**
+   * Resolve (or create) the Paystack customer for this app user. Paystack keys
+   * customers by email, so we look the customer up first — a customer may
+   * already exist from a previous checkout or DVA creation and creating it a
+   * second time would 400.
+   */
+  async getOrCreateCustomer(params: {
+    email: string;
+    name: string;
+    phone?: string;
+  }): Promise<{ customerCode: string }> {
+    const { email, name, phone } = params;
+    const [first, ...rest] = (name ?? '').trim().split(/\s+/);
+
+    try {
+      const found = await this.request<PaystackCustomerResponse>({
+        method: 'get',
+        url: `/customer/${encodeURIComponent(email)}`,
+      });
+      if (found?.data?.customer_code) {
+        return { customerCode: found.data.customer_code };
+      }
+    } catch {
+      // 404 (unknown customer) or transient issue → fall through to create.
+    }
+
+    const created = await this.request<PaystackCustomerResponse>({
+      method: 'post',
+      url: '/customer',
+      data: {
+        email,
+        first_name: first || 'Customer',
+        last_name: rest.join(' ') || 'Guest',
+        ...(phone ? { phone } : {}),
+      },
+    });
+    if (!created?.status || !created?.data?.customer_code) {
+      throw new BadGatewayException(
+        `Paystack customer creation failed: ${created?.message ?? 'unknown error'}`,
+      );
+    }
+    return { customerCode: created.data.customer_code };
+  }
+/**
+   * Create a dedicated virtual account for an existing customer.
+   *
+   * Assignment is synchronous for some banks (`assigned: true` with an
+   * `account_number` in the response — test-bank, titan-paystack) and
+   * asynchronous for others (wema/providus, where the response has
+   * `assigned: false` and `assignment.status === 'provisioning'`). For async
+   * banks the account is finished via the `dedicatedaccount.assign.success`
+   * webhook and/or a `POST /dedicated_account/requery`.
+   */
+  async createDedicatedAccount(params: {
+    customerCode: string;
+    preferredBank?: string;
+  }): Promise<PaystackDedicatedAccountData> {
+    const preferredBank =
+      params.preferredBank ??
+      this.config.get<string>('PAYSTACK_DVA_PREFERRED_BANK', 'wema-bank');
+    const { data } = await this.request<PaystackCreateDedicatedAccountResponse>({
+      method: 'post',
+      url: '/dedicated_account',
+      data: {
+        customer: params.customerCode,
+        preferred_bank: preferredBank,
+      },
+    });
+    if (!data?.status || !data?.data) {
+      throw new BadGatewayException(
+        `Paystack dedicated account creation failed: ${data?.message ?? 'unknown error'}`,
+      );
+    }
+    return data.data;
+  }
+
+  /** List dedicated accounts belonging to a customer (normally 0 or 1). */
+  async listCustomerDedicatedAccounts(
+    customerCode: string,
+  ): Promise<PaystackDedicatedAccountData[]> {
+    const res = await this.request<PaystackDedicatedAccountListResponse>({
+      method: 'get',
+      url: '/dedicated_account',
+      params: { customer: customerCode },
+    });
+    if (!res?.status || !Array.isArray(res?.data)) {
+      throw new BadGatewayException(
+        `Paystack dedicated account lookup failed: ${res?.message ?? 'unknown error'}`,
+      );
+    }
+    return res.data;
+  }
+
+  /**
+   * Ask Paystack whether an asynchronously-provisioned DVA is ready. Safe to
+   * call repeatedly while `assignment.status === 'provisioning'`; returns
+   * `assigned: true` plus the account number once the bank has finished.
+   */
+  async requeryDedicatedAccount(params: {
+    customerCode?: string;
+    accountNumber?: string;
+  }): Promise<Record<string, any>> {
+    const { data } = await this.request<PaystackRequeryDedicatedAccountResponse>({
+      method: 'post',
+      url: '/dedicated_account/requery',
+      data: {
+        ...(params.customerCode ? { customer: params.customerCode } : {}),
+        ...(params.accountNumber ? { account_number: params.accountNumber } : {}),
+      },
+    });
+    if (!data?.status || !data?.data) {
+      throw new BadGatewayException(
+        `Paystack dedicated account requery failed: ${data?.message ?? 'unknown error'}`,
+      );
+    }
+    return data.data;
   }
 }

@@ -22,6 +22,8 @@ export class AirtimeService {
       description: `Airtime top-up - ${dto.network}`,
       meta: { network: dto.network, phone: dto.phone, amount: dto.amount },
       order: { productCode, phone: dto.phone },
+      paymentWallet: dto.wallet,
+      cashback: item?.commission ?? 0,
       pin: dto.pin,
     });
   }

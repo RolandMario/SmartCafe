@@ -23,12 +23,12 @@ export class QueryCatalogDto {
   service?: ServiceType;
 
   @ApiPropertyOptional({
-    enum: ['pairgate', 'vtpass', 'static'],
-    description: 'Filter by fulfilling vendor (pairgate | vtpass | static).',
+    enum: ['pairgate', 'vtpass', 'peyflex', 'static'],
+    description: 'Filter by fulfilling vendor (pairgate | vtpass | peyflex | static).',
   })
   @IsOptional()
-  @IsIn(['pairgate', 'vtpass', 'static'])
-  vendor?: 'pairgate' | 'vtpass' | 'static';
+  @IsIn(['pairgate', 'vtpass', 'peyflex', 'static'])
+  vendor?: 'pairgate' | 'vtpass' | 'peyflex' | 'static';
 
   @ApiPropertyOptional({ description: 'One-based page number (admin list).' })
   @IsOptional()
@@ -80,13 +80,13 @@ export class CreateCatalogItemDto {
   amount?: number;
 
   @ApiPropertyOptional({
-    enum: ['pairgate', 'vtpass', 'static'],
+    enum: ['pairgate', 'vtpass', 'peyflex', 'static'],
     description:
-      "Fulfilling vendor ('pairgate' | 'vtpass' | 'static') — dictates which vendor account is debited on purchase.",
+      "Fulfilling vendor ('pairgate' | 'vtpass' | 'peyflex' | 'static') — dictates which vendor account is debited on purchase.",
   })
   @IsOptional()
-  @IsIn(['pairgate', 'vtpass', 'static'])
-  vendor?: 'pairgate' | 'vtpass' | 'static';
+  @IsIn(['pairgate', 'vtpass', 'peyflex', 'static'])
+  vendor?: 'pairgate' | 'vtpass' | 'peyflex' | 'static';
 
   @ApiPropertyOptional()
   @IsOptional()

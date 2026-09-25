@@ -22,10 +22,11 @@ import { MockProvider } from './providers/mock.provider';
 import { VtpassProvider } from './providers/vtpass.provider';
 import { EbulksmsProvider } from './providers/ebulksms.provider';
 import { PairgateProvider } from './providers/pairgate.provider';
+import { PeyflexProvider } from './providers/peyflex.provider';
 import { CatalogSyncService, DataSyncStatusShape } from '../catalog/catalog-sync.service';
 import { DataPlanRow } from '../catalog/data-plan-sync';
 
-export const KNOWN_VENDOR_PROVIDERS = ['mock', 'vtpass', 'ebulksms', 'pairgate'] as const;
+export const KNOWN_VENDOR_PROVIDERS = ['mock', 'vtpass', 'ebulksms', 'pairgate', 'peyflex'] as const;
 export type KnownVendorProvider = (typeof KNOWN_VENDOR_PROVIDERS)[number];
 
 /**
@@ -88,12 +89,14 @@ export class VendorService implements OnModuleInit {
     private readonly vtpassProvider: VtpassProvider,
     ebulksmsProvider: EbulksmsProvider,
     private readonly pairgateProvider: PairgateProvider,
+    private readonly peyflexProvider: PeyflexProvider,
     private readonly catalogSync: CatalogSyncService,
   ) {
     this.register(mockProvider);
     this.register(this.vtpassProvider);
     this.register(ebulksmsProvider);
     this.register(this.pairgateProvider);
+    this.register(this.peyflexProvider);
   }
 
   private register(provider: VendorProvider) {
@@ -190,9 +193,19 @@ export class VendorService implements OnModuleInit {
 
     // Pre-warm the combined DATA catalog (every configured data vendor) in the
     // background so the app never ships with an empty plan list on a cold start.
-    if (this.pairgateProvider.isConfigured() || this.vtpassProvider.isConfigured()) {
+    if (
+      this.pairgateProvider.isConfigured() ||
+      this.vtpassProvider.isConfigured() ||
+      this.peyflexProvider.isConfigured()
+    ) {
       this.syncDataFrom();
     }
+
+    this.logger.log(
+      `Vendor routing: ${Object.values(ServiceType)
+        .map((s) => `${s}=${this.getProvider(s).name}`)
+        .join(', ')}`,
+    );
   }
 
   /** Resolve the provider instance that fulfils a given service type. */
@@ -418,6 +431,13 @@ export class VendorService implements OnModuleInit {
           fetchErrors.push(`pairgate: ${String(err?.message ?? err)}`);
         }
       }
+      if (this.peyflexProvider.isConfigured()) {
+        try {
+          rows.push(...(await this.peyflexProvider.fetchAllDataPlans()));
+        } catch (err: any) {
+          fetchErrors.push(`peyflex: ${String(err?.message ?? err)}`);
+        }
+      }
       if (this.vtpassProvider.isConfigured()) {
         try {
           rows.push(...(await this.vtpassProvider.fetchAllDataPlans()));
@@ -471,12 +491,19 @@ export class VendorService implements OnModuleInit {
     if (order.serviceType === ServiceType.DATA) {
       const vendor = String(order.vendor ?? '').toLowerCase();
       const dataProvider =
-        (vendor === 'pairgate' || vendor === 'vtpass') && this.providers.has(vendor)
+        (vendor === 'pairgate' || vendor === 'vtpass' || vendor === 'peyflex') &&
+        this.providers.has(vendor)
           ? this.providers.get(vendor)!
           : this.getProvider(ServiceType.DATA);
+      this.logger.log(
+        `[vendor] DATA buy (requestId=${order.requestId}) -> ${dataProvider.name}`,
+      );
       return dataProvider.buyData(order);
     }
     const provider = this.getProvider(order.serviceType);
+    this.logger.log(
+      `[vendor] ${order.serviceType} buy (requestId=${order.requestId}) -> ${provider.name}`,
+    );
     switch (order.serviceType) {
       case ServiceType.AIRTIME:
         return provider.buyAirtime(order);
@@ -523,7 +550,7 @@ export class VendorService implements OnModuleInit {
     const vendor = String(params.vendor ?? '').toLowerCase();
     const provider =
       params.serviceType === ServiceType.DATA &&
-      (vendor === 'pairgate' || vendor === 'vtpass') &&
+      (vendor === 'pairgate' || vendor === 'vtpass' || vendor === 'peyflex') &&
       this.providers.has(vendor)
         ? this.providers.get(vendor)!
         : this.getProvider(params.serviceType);

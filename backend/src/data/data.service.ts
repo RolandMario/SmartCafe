@@ -43,10 +43,13 @@ export class DataService {
       },
       order: {
         productCode: item.productCode,
+        description: item.description,
         provider: item.provider,
         vendor: item.vendor ?? undefined,
         phone: dto.phone,
       },
+      paymentWallet: dto.wallet,
+      cashback: item.commission ?? 0,
       pin: dto.pin,
     });
   }

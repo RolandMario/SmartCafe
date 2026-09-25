@@ -32,6 +32,21 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+  const httpLogger = new Logger('HTTP');
+
+  // Log every request: method, path, status, duration and (when authenticated)
+  // the user id — so failures like a 401 are visible in the console with full
+  // context of which endpoint and token state produced them.
+  app.use((req: any, res: any, next: any) => {
+    const startedAt = Date.now();
+    res.once('finish', () => {
+      const duration = Date.now() - startedAt;
+      const user = req.user as { userId?: string; _id?: any } | undefined;
+      const userId = user?.userId ?? String(user?._id ?? '-');
+      httpLogger.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${duration}ms, user=${userId})`);
+    });
+    next();
+  });
 
   app.use(helmet());
   app.enableCors({

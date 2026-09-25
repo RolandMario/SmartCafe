@@ -20,6 +20,13 @@ import {
   staticDataPlanRows,
 } from '../../catalog/data-plan-sync';
 
+import {
+  CABLE_SERVICES,
+  CablePlanRow,
+  cleanCablePlanName,
+  staticCablePlanRows,
+} from '../../catalog/cable-plan-sync';
+
 /**
  * VTPass provider adapter. Covers all platform services:
  * airtime, data, cable (DSTV/GOTV/StarTimes), electricity
@@ -117,10 +124,22 @@ export class VtpassProvider implements VendorProvider {
     return match ? match[1] : `${key.split('-')[0] || ''}-data`;
   }
 
-  /** Cable plans are vended under VTPass serviceIDs dstv / gotv / startimes. */
-  private cableServiceId(code?: string): string {
-    const key = String(code ?? '').toLowerCase();
-    return { dstv: 'dstv', gotv: 'gotv', startimes: 'startimes' }[key] ?? 'dstv';
+  /**
+   * Map a catalog provider slug (or legacy product code) to the VTPass cable
+   * serviceID. The three cable brands are vended under literal serviceIDs
+   * `dstv`, `gotv` and `startimes` — the serviceID is NEVER the package's
+   * variation code. Orders built by CableService carry the provider slug
+   * ('DSTV' | 'GOTV' | 'STARTIMES'); when only a code is available (legacy
+   * orders) the prefix decides (gotv-*) and anything else falls back to DSTV,
+   * which matches the historical behaviour of every non-DSTV code silently
+   * routing to the dstv service.
+   */
+  private cableServiceId(providerOrCode?: string): string {
+    const key = String(providerOrCode ?? '').toLowerCase();
+    const slug = key.replace(/[^a-z]/g, '');
+    if (slug.includes('startime')) return 'startimes';
+    if (slug.startsWith('gotv')) return 'gotv';
+    return 'dstv';
   }
 
   /**
@@ -166,6 +185,10 @@ export class VtpassProvider implements VendorProvider {
       );
       return config;
     });
+    const mask = (v: string) => (v ? `${v.slice(0, 4)}…len=${v.length}` : '(MISSING)');
+    this.logger.log(
+      `VtpassProvider started: baseUrl="${this.baseUrl || '(MISSING)'}" apiKey=${mask(apiKey)} secretKey=${mask(secretKey)} publicKey=${mask(publicKey)}`,
+    );
   }
 
   private mapResult(payload: any): VendorResult {
@@ -301,8 +324,15 @@ export class VtpassProvider implements VendorProvider {
     if (options.subscriptionType) body.subscription_type = options.subscriptionType;
     // WAEC registration / result checker: buy several PINs in one request.
     if (order.quantity != null && order.quantity >= 1) body.quantity = order.quantity;
+    this.logger.log(
+      `[vtpass] POST ${this.baseUrl || ''}/pay serviceID=${serviceID} request_id=${order.requestId} variation=${body.variation_code} amount=${body.amount ?? 'n/a'}`,
+    );
     const { data } = await this.client.post('/pay', body);
-    return this.mapResult(data);
+    const result = this.mapResult(data);
+    this.logger.log(
+      `[vtpass] reply request_id=${order.requestId} code=${data?.code} mapStatus=${result.status} desc=${result.message}`,
+    );
+    return result;
   }
 
   async buyAirtime(order: VendorOrder): Promise<VendorResult> {
@@ -335,7 +365,11 @@ export class VtpassProvider implements VendorProvider {
   }
 
   async buyCable(order: VendorOrder): Promise<VendorResult> {
-    const serviceID = this.cableServiceId(order.productCode);
+    // VTPass routes cable by serviceID (dstv | gotv | startimes), NOT by the
+    // variation_code. Prefer the provider slug CableService threads onto the
+    // order; older orders fall back to a prefix match on the code (gotv-*) and
+    // then to the long-standing DSTV default.
+    const serviceID = this.cableServiceId(order.provider ?? order.productCode ?? '');
     // VTPass documents `subscription_type: renew` as mandatory for cable renewals.
     return this.pay(order, serviceID, order.smartCardNumber, { subscriptionType: 'renew' });
   }
@@ -392,17 +426,25 @@ export class VtpassProvider implements VendorProvider {
 
   async getProviderPrice(item: ProviderPriceItem): Promise<number | null> {
     const code = item.productCode ?? '';
+
+    // Cable product codes are opaque — StarTimes variants like "nova" / "uni-2"
+    // give no brand hint — so search every cable serviceID's variation list for
+    // the code instead of guessing the service from the string.
+    if (item.serviceType === ServiceType.CABLE) {
+      for (const svc of CABLE_SERVICES) {
+        const variations = await this.getVariations(svc.serviceID);
+        const match = variations.find((v) => v.variationCode === code);
+        if (match) return match.variationAmount;
+      }
+      return null;
+    }
+
     let serviceID: string;
     let variationCode: string;
 
     switch (item.serviceType) {
       case ServiceType.DATA: {
         serviceID = this.dataServiceId(code);
-        variationCode = code;
-        break;
-      }
-      case ServiceType.CABLE: {
-        serviceID = this.cableServiceId(code);
         variationCode = code;
         break;
       }
@@ -514,6 +556,61 @@ export class VtpassProvider implements VendorProvider {
     if (rows.length === 0) {
       this.logger.warn('VTPass returned no DATA plans — restoring seeded DATA plans');
       return staticDataPlanRows();
+    }
+    return rows;
+  }
+
+  /**
+   * Full CABLE plan list for every provider (GET /service-variations?serviceID=
+   * dstv | gotv | startimes) — the runtime counterpart of the seed's
+   * `syncCablePlans()` used to refresh a live backend. Dedupes codes (last
+   * occurrence wins) and drops price tokens from the names. Falls back to the
+   * bundled static cable seed when VTPass is not configured or unreachable.
+   */
+  async fetchAllCablePlans(): Promise<CablePlanRow[]> {
+    if (!this.isConfigured()) {
+      this.logger.warn('VTPass keys not set — restoring seeded CABLE plans');
+      return staticCablePlanRows();
+    }
+    const rows: CablePlanRow[] = [];
+    for (const svc of CABLE_SERVICES) {
+      const variations = await this.getVariations(svc.serviceID);
+      if (variations.length === 0) {
+        this.logger.warn(
+          `VTPass cable: variation list empty for "${svc.serviceID}" — keeping any existing ${svc.provider} plans`,
+        );
+        continue;
+      }
+      // VTPass's live list occasionally repeats a variation_code for different
+      // plans (vendor data quirk). Dedupe, last occurrence wins.
+      const plans = new Map<string, { name: string; amount: number }>();
+      for (const variation of variations) {
+        if (
+          variation.variationCode &&
+          Number.isFinite(variation.variationAmount) &&
+          variation.variationAmount > 0
+        ) {
+          plans.set(variation.variationCode, {
+            name: cleanCablePlanName(variation.productName ?? ''),
+            amount: variation.variationAmount,
+          });
+        }
+      }
+      for (const [code, plan] of plans) {
+        rows.push({
+          provider: svc.provider,
+          providerLabel: svc.providerLabel,
+          productCode: code,
+          vendor: 'vtpass' as const,
+          name: plan.name,
+          amount: plan.amount,
+          description: '',
+        });
+      }
+    }
+    if (rows.length === 0) {
+      this.logger.warn('VTPass returned no CABLE plans — restoring seeded CABLE plans');
+      return staticCablePlanRows();
     }
     return rows;
   }

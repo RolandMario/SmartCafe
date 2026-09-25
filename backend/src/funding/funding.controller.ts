@@ -12,6 +12,7 @@ import {
 import { Request, Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FundingService } from './funding.service';
+import { DedicatedAccountService } from './dedicated-account.service';
 import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
 import { AdminApproveDto, DepositDto, QueryFundingDto } from './dto/funding.dto';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
@@ -28,6 +29,7 @@ export class FundingController {
   constructor(
     private readonly fundingService: FundingService,
     private readonly gatewayRegistry: PaymentGatewayRegistry,
+    private readonly dedicatedAccounts: DedicatedAccountService,
   ) {}
 
   @Get('gateways')
@@ -41,6 +43,27 @@ export class FundingController {
         .filter((g) => this.gatewayRegistry.isActive(g))
         .map((g) => ({ provider: g.name, label: g.label })),
     };
+  }
+
+  @Post('dva')
+  @ApiOperation({
+    summary:
+      'Get or create my Paystack dedicated virtual account (personal bank account number for wallet top-ups by transfer). Idempotent — safe to call repeatedly.',
+  })
+  createDva(@CurrentUser() user: AuthUser) {
+    return this.dedicatedAccounts.getOrCreate(user.userId).then((dedicatedAccount) => ({
+      dedicatedAccount,
+    }));
+  }
+
+  @Get('dva')
+  @ApiOperation({
+    summary:
+      "My dedicated virtual account, or null when it hasn't been created yet. Pending accounts are re-checked against the provider so this converges to a ready account number.",
+  })
+  async getDva(@CurrentUser() user: AuthUser) {
+    const doc = await this.dedicatedAccounts.getByUser(user.userId);
+    return { dedicatedAccount: DedicatedAccountService.toView(doc) };
   }
 
   @Post('deposit')

@@ -54,6 +54,8 @@ export class JambService {
         phone: user?.phone ?? '',
         customerData: { profileId: dto.profileId },
       },
+      paymentWallet: dto.wallet,
+      cashback: item.commission ?? 0,
       pin: dto.pin,
     });
   }

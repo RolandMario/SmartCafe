@@ -1,7 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsMongoId, IsOptional, IsString, Matches } from 'class-validator';
+import { IsEnum, IsMongoId, IsOptional, IsString, Matches } from 'class-validator';
 import { NIGERIAN_PHONE } from '../../airtime/dto/airtime.dto';
 import { TRANSACTION_PIN_REGEX } from '../../users/dto/pin.dto';
+import { PaymentWallet } from '../../common/enums';
 
 export class BuyDataDto {
   @ApiProperty({ description: 'Catalog data-plan id' })
@@ -11,6 +12,15 @@ export class BuyDataDto {
   @ApiProperty({ example: '08012345678' })
   @Matches(NIGERIAN_PHONE, { message: 'Valid Nigerian phone number required' })
   phone: string;
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Wallet to fund the purchase from ('main' default | 'cashback').",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 
   @ApiPropertyOptional({ example: '1234', description: '4-digit transaction PIN authorising this purchase' })
   @IsOptional()

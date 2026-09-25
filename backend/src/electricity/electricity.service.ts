@@ -50,6 +50,8 @@ export class ElectricityService {
         phone: user?.phone ?? '',
         customerData: { meterType: dto.meterType },
       },
+      paymentWallet: dto.wallet,
+      cashback: disco?.commission ?? 0,
       pin: dto.pin,
     });
   }

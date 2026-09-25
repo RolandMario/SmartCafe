@@ -1,6 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsMongoId, IsString, Matches, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEnum, IsMongoId, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { TRANSACTION_PIN_REGEX } from '../../users/dto/pin.dto';
+import { PaymentWallet } from '../../common/enums';
 
 export class VerifyJambDto {
   @ApiProperty({ description: 'Catalog JAMB product id (UTME PIN variation)' })
@@ -27,4 +28,13 @@ export class BuyJambDto {
   @IsString()
   @Matches(TRANSACTION_PIN_REGEX, { message: 'Transaction PIN must be exactly 4 digits' })
   pin?: string;
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Wallet to fund the purchase from ('main' default | 'cashback').",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 }

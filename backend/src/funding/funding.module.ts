@@ -2,7 +2,12 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { FundingController } from './funding.controller';
 import { FundingService } from './funding.service';
+import { DedicatedAccountService } from './dedicated-account.service';
 import { Funding, FundingSchema } from './schemas/funding.schema';
+import {
+  DedicatedAccount,
+  DedicatedAccountSchema,
+} from './schemas/dedicated-account.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { WalletModule } from '../wallet/wallet.module';
 import { PaymentsModule } from '../payments/payments.module';
@@ -11,13 +16,14 @@ import { PaymentsModule } from '../payments/payments.module';
   imports: [
     MongooseModule.forFeature([
       { name: Funding.name, schema: FundingSchema },
+      { name: DedicatedAccount.name, schema: DedicatedAccountSchema },
       { name: User.name, schema: UserSchema },
     ]),
     WalletModule,
     PaymentsModule,
   ],
   controllers: [FundingController],
-  providers: [FundingService],
-  exports: [FundingService],
+  providers: [FundingService, DedicatedAccountService],
+  exports: [FundingService, DedicatedAccountService],
 })
 export class FundingModule {}

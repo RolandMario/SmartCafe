@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { ServiceType, TransactionStatus } from '../../common/enums';
+import { PaymentWallet, ServiceType, TransactionStatus } from '../../common/enums';
 
 @Schema({ timestamps: true })
 export class Transaction extends Document {
@@ -27,6 +27,25 @@ export class Transaction extends Document {
 
   @Prop({ type: Number, default: 0 })
   commission: number;
+
+  /** Which wallet funded the purchase ('main' default | 'cashback'). */
+  @Prop({ type: String, enum: PaymentWallet, default: PaymentWallet.MAIN })
+  paymentWallet: PaymentWallet;
+
+  /**
+   * Cashback the user stands to earn (always >= 0) when this purchase settles
+   * as successful — captured from the catalog item's admin-set commission.
+   * 0 means the product earns no cashback.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  cashback: number;
+
+  /**
+   * Idempotency guard: true once the cashback has been credited, so settlement
+   * never grants it twice even if requery races.
+   */
+  @Prop({ type: Boolean, default: false })
+  cashbackCredited: boolean;
 
   @Prop({ type: String, enum: TransactionStatus, default: TransactionStatus.PENDING, index: true })
   status: TransactionStatus;

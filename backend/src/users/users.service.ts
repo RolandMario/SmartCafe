@@ -1,8 +1,8 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
@@ -12,8 +12,28 @@ import { Wallet } from '../wallet/schemas/wallet.schema';
 import { WalletLedger } from '../wallet/schemas/wallet-ledger.schema';
 import { Transaction } from '../transactions/schemas/transaction.schema';
 import { Funding } from '../funding/schemas/funding.schema';
-import { Role } from '../common/enums';
+import { Role, ServiceType, TransactionStatus } from '../common/enums';
 import { SearchPaginationDto } from '../common/dto/pagination.dto';
+
+export interface AdminUserDetail {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+  phone: string;
+  role: Role;
+  isActive: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+  wallet: {
+    balance: number;
+    cashbackBalance: number;
+    currency: string;
+  };
+  stats: {
+    total: number;
+    items: Array<{ service: ServiceType; count: number; volume: number }>;
+  };
+}
 
 @Injectable()
 export class UsersService {
@@ -50,7 +70,7 @@ export class UsersService {
         throw new BadRequestException('Enter your current PIN to change it');
       }
       if (!(await bcrypt.compare(currentPin, user.pin))) {
-        throw new UnauthorizedException('Current transaction PIN is incorrect');
+        throw new ForbiddenException('Current transaction PIN is incorrect');
       }
     }
 
@@ -112,7 +132,11 @@ export class UsersService {
   }
 
   /** Shared guard checks + deletion of the user and all referencing documents. */
-  private async removeUserData(objectId: Types.ObjectId, session?: ClientSession) {
+  private async removeUserData(
+    objectId: Types.ObjectId,
+    session?: ClientSession,
+    options: { allowBalance?: boolean } = {},
+  ) {
     const opts = session ? { session } : {};
 
     const user = await this.userModel.findById(objectId, {}, opts).lean();
@@ -126,7 +150,11 @@ export class UsersService {
 
     // Refuse while a balance remains rather than silently destroying funds.
     const wallet = await this.walletModel.findOne({ user: objectId }, {}, opts).lean();
-    if (wallet && wallet.balance > 0) {
+    if (
+      !options.allowBalance &&
+      wallet &&
+      (wallet.balance > 0 || (wallet.cashbackBalance ?? 0) > 0)
+    ) {
       throw new BadRequestException(
         'Your wallet still has a balance. Spend it before deleting your account.',
       );
@@ -167,7 +195,94 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
+
+
+  /**
+   * Full admin view of a single user: profile, wallet balances and successful
+   * purchase stats per service (count + volume), zero-filled for every known
+   * service so the admin UI can always draw the full chart.
+   */
+  async adminDetail(userId: string): Promise<AdminUserDetail> {
+    const objectId = new Types.ObjectId(userId);
+    const user = await this.userModel.findById(objectId).lean<{
+      _id: Types.ObjectId;
+      name: string;
+      email: string;
+      phone: string;
+      role: Role;
+      isActive: boolean;
+      createdAt?: Date;
+      updatedAt?: Date;
+    }>();
+    if (!user) throw new NotFoundException('User not found');
+
+    const wallet = await this.walletModel.findOne({ user: objectId }).lean<{
+      balance?: number;
+      cashbackBalance?: number;
+      currency?: string;
+    }>();
+
+    const rows = await this.transactionModel.aggregate<{
+      _id: ServiceType;
+      count: number;
+      volume: number;
+    }>([
+      { $match: { user: objectId, status: TransactionStatus.SUCCESS } },
+      {
+        $group: {
+          _id: '$service',
+          count: { $sum: 1 },
+          volume: { $sum: '$amount' },
+        },
+      },
+    ]);
+
+    const byService = new Map(rows.map((r) => [r._id, r]));
+    const items = Object.values(ServiceType).map((service) => {
+      const row = byService.get(service);
+      return { service, count: row?.count ?? 0, volume: row?.volume ?? 0 };
+    });
+
+    return {
+      ...user,
+      wallet: {
+        balance: wallet?.balance ?? 0,
+        cashbackBalance: wallet?.cashbackBalance ?? 0,
+        currency: wallet?.currency ?? 'NGN',
+      },
+      stats: {
+        total: items.reduce((sum, i) => sum + i.count, 0),
+        items,
+      },
+    };
+  }
+
+  /**
+   * Admin-only permanent deletion. Reuses the same cleanup as self-delete but
+   * allows removing users who still hold a wallet balance (admins can see the
+   * balance in the detail view before choosing to delete). Admin accounts are
+   * still protected.
+   */
+  async adminDelete(userId: string): Promise<{ message: string }> {
+    const objectId = new Types.ObjectId(userId);
+    const session = await this.connection.startSession();
+
+    try {
+      await session.withTransaction(async () => {
+        await this.removeUserData(objectId, session, { allowBalance: true });
+      });
+    } catch (err) {
+      if (!isTransactionUnsupportedError(err)) throw err;
+      await this.removeUserData(objectId, undefined, { allowBalance: true });
+    } finally {
+      await session.endSession();
+    }
+
+    return { message: 'User deleted successfully' };
+  }
 }
+
+
 
 /**
  * True when the driver reports that this MongoDB server cannot run

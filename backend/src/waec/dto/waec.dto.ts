@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsEnum,
   IsInt,
   IsMongoId,
   IsOptional,
@@ -11,6 +12,7 @@ import {
   Matches,
 } from 'class-validator';
 import { TRANSACTION_PIN_REGEX } from '../../users/dto/pin.dto';
+import { PaymentWallet } from '../../common/enums';
 
 export class BuyWaecDto {
   @ApiProperty({ description: 'Catalog WAEC product id (result checker or registration)' })
@@ -54,4 +56,13 @@ export class BuyWaecDto {
   @Min(1)
   @Max(10)
   quantity?: number;
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Wallet to fund the purchase from ('main' default | 'cashback').",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 }

@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { TransactionsService } from './transactions.service';
-import { QueryTransactionsDto } from './dto/transactions.dto';
+import { QueryStatsDto, QueryTransactionsDto } from './dto/transactions.dto';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('transactions')
@@ -13,6 +13,14 @@ export class TransactionsController {
   @ApiOperation({ summary: 'My transaction history' })
   mine(@CurrentUser() user: AuthUser, @Query() query: QueryTransactionsDto) {
     return this.transactionsService.myTransactions(user.userId, query);
+  }
+
+  @Get('stats')
+  @ApiOperation({
+    summary: 'My purchase analytics — number of successful purchases (and volume) per service',
+  })
+  stats(@CurrentUser() user: AuthUser, @Query() query: QueryStatsDto) {
+    return this.transactionsService.stats(user.userId, query.month);
   }
 
   @Get(':id')

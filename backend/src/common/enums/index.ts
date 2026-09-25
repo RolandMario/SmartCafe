@@ -24,6 +24,16 @@ export enum LedgerType {
   DEBIT = 'debit',
 }
 
+/**
+ * Which wallet a debit/credit/ledger-entry applies to. The main (fundable,
+ * withdrawable) wallet backs every purchase by default; the cashback wallet is
+ * only ever topped up by purchase commissions and spent on future purchases.
+ */
+export enum PaymentWallet {
+  MAIN = 'main',
+  CASHBACK = 'cashback',
+}
+
 export enum FundingStatus {
   PENDING = 'pending',
   CREDITED = 'credited',

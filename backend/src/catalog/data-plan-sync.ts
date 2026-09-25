@@ -13,7 +13,7 @@ export interface DataPlanRow {
   /** Vendor plan id (pairgate plan_id / VTPass variation code). */
   productCode: string;
   /** Vendor that fulfils this plan (its account is debited on purchase). */
-  vendor: 'pairgate' | 'vtpass' | 'static';
+  vendor: 'pairgate' | 'vtpass' | 'peyflex' | 'static';
   name: string;
   /** Provider's price (becomes the catalog `amount`). */
   amount: number;

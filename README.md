@@ -20,12 +20,13 @@ A full-stack Nigerian **VTU (Virtual Top-Up)** platform:
 ## Architecture highlights
 
 - **Wallet-first, atomic transactions** — every purchase debits the wallet and records a ledger entry inside a **MongoDB transaction** (requires the replica set below), then calls the vendor, and refunds automatically on vendor failure.
-- **Vendor abstraction** (`VendorProvider` interface) with four implementations:
+- **Vendor abstraction** (`VendorProvider` interface) with five implementations:
   - `MockProvider` (default) — simulated success/failure, tokens, PINs — no keys needed.
   - `VTPassProvider` — production adapter for VTPass (airtime/data/cable/electricity/WAEC + messaging API for SMS). Switch with `VENDOR_PROVIDER=vtpass` and add your keys.
   - `EbulksmsProvider` — production adapter for bulk SMS via the ebulksms JSON API (`sendsms.json`, `application/json` content type, `234…` international recipient numbers, 160-char pages up to 612 chars). Switch with `VENDOR_PROVIDER=ebulksms` and add `EBULK_USERNAME` / `EBULK_API_KEY`; SMS-only, so keep `vtpass` for the other services.
   - `PairgateProvider` — production adapter for Pairgate data bundles (`/data-plans`, `/data/purchase`, `/wallet/balance`). **Pairgate is the default DATA provider**: set `PAIRGATE_API_KEY` and DATA routes to it automatically on boot (the DATA catalog is re-seeded from Pairgate's plan list in the background because Pairgate throttles requests); an admin can also pin DATA on the **Vendors** page. Switching DATA away re-syncs from VTPass.
-- **Per-service vendor routing (admin-configurable)** — each service (AIRTIME, DATA, CABLE, ELECTRICITY, WAEC, SMS) can be pinned to its own provider (`mock`/`vtpass`/`ebulksms`/`pairgate`) from the admin **Vendors** page (`GET/PATCH /admin/vendors`). The choice is persisted in Mongo (`vendorconfigs`), seeded from `VENDOR_PROVIDER` at startup (DATA instead defaults to Pairgate when `PAIRGATE_API_KEY` is set), and applied to purchases, verifications and requeries immediately — no restart needed. The page flags incompatible pairings (e.g. ebulksms only supports SMS, pairgate only DATA).
+  - `PeyflexProvider` — production adapter for Peyflex airtime, data bundles and electricity tokens (`/api/airtime/topup/`, `/api/data/purchase/`, `/api/electricity/verify|subscribe/`, `/api/wallet/balance/`). **Disabled by default**: setting `PEYFLEX_API_KEY` only adds Peyflex plans to the combined DATA catalog re-seed — a service must be explicitly pinned to `peyflex` on the **Vendors** page before any purchase routes to it (each seeded DATA plan carries its Peyflex network id in the row `description`, which the adapter reads back at purchase time).
+- **Per-service vendor routing (admin-configurable)** — each service (AIRTIME, DATA, CABLE, ELECTRICITY, WAEC, SMS) can be pinned to its own provider (`mock`/`vtpass`/`ebulksms`/`pairgate`/`peyflex`) from the admin **Vendors** page (`GET/PATCH /admin/vendors`). The choice is persisted in Mongo (`vendorconfigs`), seeded from `VENDOR_PROVIDER` at startup (DATA instead defaults to Pairgate when `PAIRGATE_API_KEY` is set), and applied to purchases, verifications and requeries immediately — no restart needed. The page flags incompatible pairings (e.g. ebulksms only supports SMS, pairgate only DATA, peyflex airtime/data/electricity).
 - **Idempotency** — every order has a unique `requestId` (uuid) forwarded to the vendor; failed calls can be **re-queried**.
 - **JWT auth** (access + rotating refresh), RBAC (`user`/`admin`), validation pipes, Helmet, Swagger at `/api/docs`.
 - **Transaction PIN** — every customer purchase requires a 4-digit PIN (`GET /users/pin/status`, `POST /users/pin`, verified in `TransactionsService` before any wallet debit / vendor call).
@@ -147,6 +148,36 @@ Pairgate is the **default data provider**: DATA routes to it automatically once
 > (`EXPO_PUBLIC_API_URL`) and `admin/.env` (`NEXT_PUBLIC_API_URL`) at your local
 > backend. Routing changes propagated to Mongo are picked up by instances within
 > ~5 seconds, so purchases always hit the provider you selected.
+
+## Using Peyflex provider (airtime / data / electricity)
+
+Peyflex is **disabled by default**: no service routes to it until an admin pins it
+there from the **Vendors** page. Setting a key only makes Peyflex's plans join the
+combined DATA catalog re-seed (side by side with Pairgate/VTPass — each plan's own
+vendor account is debited on purchase).
+
+1. Fill in the Peyflex credentials in `backend/.env`:
+   ```
+   PEYFLEX_BASE_URL=https://client.peyflex.com.ng
+   PEYFLEX_API_KEY=<your peyflex api token>
+   ```
+2. On the next backend start (or via **Re-sync all DATA plans** on the Vendors
+   page) the DATA catalog gains Peyflex bundles. Each seeded row stores its
+   Peyflex network id (`mtn_data_share`, `mtn_gifting_data`, …) in the plan
+   `description` so a purchase replays the right `network` — you can hide/show
+   individual plans on the Catalog page as usual.
+3. To actually sell through Peyflex, pin the service(s) on the **Vendors** page:
+   - **AIRTIME** → `peyflex` (`POST /api/airtime/topup/`, network from the live
+     `/api/airtime/networks/` list),
+   - **ELECTRICITY** → `peyflex` (meter verify `GET /api/electricity/verify/`
+     and token `POST /api/electricity/subscribe/`; the catalog disco code maps
+     straight to Peyflex's `plan`, e.g. `ikeja-electric`),
+   - **DATA** → `peyflex` (or leave the default pairgate and toggle which plans
+     are active in the catalog — a plan always debits its own vendor).
+   Pinning is picked up within ~5 seconds and applies to purchases, verifications
+   and requeries immediately. Peyflex exposes no transaction-status endpoint on
+   this platform, so `requery` keeps orders `pending` (never refunds a delivered
+   token/bundle).
 
 ## Payment gateways: Monnify & Paystack (wallet funding)
 

@@ -39,12 +39,12 @@ export class CatalogItem extends Document {
   unitPrice?: number;
 
   /**
-   * Vendor that fulfils this product ('pairgate' | 'vtpass' | 'static'). The
+   * Vendor that fulfils this product ('pairgate' | 'vtpass' | 'peyflex' | 'static'). The
    * DATA catalog holds every vendor's plan list side by side — purchases debit
    * the plan's OWN vendor account, and the admin can hide/show each plan with
    * the `active` toggle.
    */
-  @Prop({ type: String, enum: ['pairgate', 'vtpass', 'static'], default: 'static' })
+  @Prop({ type: String, enum: ['pairgate', 'vtpass', 'peyflex', 'static'], default: 'static' })
   vendor?: string;
 
   /** Vendor's charge per unit (SMS) — used for profit reports when the SMS API exposes no unit price. */

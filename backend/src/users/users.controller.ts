@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Patch, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from '../auth/dto/auth.dto';
@@ -45,7 +45,7 @@ export class UsersController {
   async verifyPin(@CurrentUser() user: AuthUser, @Body() dto: VerifyPinDto) {
     const valid = await this.usersService.verifyPin(user.userId, dto.pin);
     if (!valid) {
-      throw new UnauthorizedException('Incorrect transaction PIN');
+      throw new ForbiddenException('Incorrect transaction PIN');
     }
     return { valid };
   }

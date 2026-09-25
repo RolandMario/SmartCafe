@@ -64,8 +64,8 @@ class UpdateVendorDto {
   @IsEnum(ServiceType)
   service: ServiceType;
 
-  @ApiProperty({ enum: ['mock', 'vtpass', 'ebulksms', 'pairgate'] })
-  @IsIn(['mock', 'vtpass', 'ebulksms', 'pairgate'])
+  @ApiProperty({ enum: ['mock', 'vtpass', 'ebulksms', 'pairgate', 'peyflex'] })
+  @IsIn(['mock', 'vtpass', 'ebulksms', 'pairgate', 'peyflex'])
   provider: string;
 }
 
@@ -203,6 +203,18 @@ export class AdminController {
   @ApiOperation({ summary: 'Activate / deactivate a user or change role' })
   updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto) {
     return this.usersService.adminUpdate(id, dto);
+  }
+
+  @Get('users/:id')
+  @ApiOperation({ summary: 'User detail - profile, wallet balance and purchase stats' })
+  userDetail(@Param('id') id: string) {
+    return this.usersService.adminDetail(id);
+  }
+
+  @Delete('users/:id')
+  @ApiOperation({ summary: 'Permanently delete a user and all associated data' })
+  deleteUser(@Param('id') id: string) {
+    return this.usersService.adminDelete(id);
   }
 
   @Post('users/:id/credit')

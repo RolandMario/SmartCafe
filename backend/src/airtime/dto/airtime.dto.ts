@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsNumber, IsOptional, IsString, Max, Min, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TRANSACTION_PIN_REGEX } from '../../users/dto/pin.dto';
+import { PaymentWallet } from '../../common/enums';
 
 export const NIGERIAN_PHONE = /^(\+?234|0)[789][01]\d{8}$/;
 
@@ -27,6 +28,15 @@ export class BuyAirtimeDto {
   @Min(50)
   @Max(100000)
   amount: number;
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Wallet to fund the purchase from ('main' default | 'cashback').",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 
   @ApiPropertyOptional({ example: '1234', description: '4-digit transaction PIN authorising this purchase' })
   @IsOptional()

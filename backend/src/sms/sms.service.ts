@@ -54,6 +54,8 @@ export class SmsService {
         message: dto.message.slice(0, 100),
       },
       order: { senderName: dto.senderName, message: dto.message, recipients: dto.recipients },
+      paymentWallet: dto.wallet,
+      cashback: item?.commission ?? 0,
       pin: dto.pin,
     });
   }

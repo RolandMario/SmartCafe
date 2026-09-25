@@ -5,6 +5,7 @@ import { MockProvider } from './providers/mock.provider';
 import { VtpassProvider } from './providers/vtpass.provider';
 import { EbulksmsProvider } from './providers/ebulksms.provider';
 import { PairgateProvider } from './providers/pairgate.provider';
+import { PeyflexProvider } from './providers/peyflex.provider';
 import { VendorConfig, VendorConfigSchema } from './schemas/vendor-config.schema';
 import { CatalogModule } from '../catalog/catalog.module';
 
@@ -16,7 +17,7 @@ import { CatalogModule } from '../catalog/catalog.module';
     ]),
     CatalogModule,
   ],
-  providers: [VendorService, MockProvider, VtpassProvider, EbulksmsProvider, PairgateProvider],
+  providers: [VendorService, MockProvider, VtpassProvider, EbulksmsProvider, PairgateProvider, PeyflexProvider],
   exports: [VendorService],
 })
 export class VendorModule {}

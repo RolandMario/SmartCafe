@@ -6,6 +6,9 @@ export interface VendorOrder {
   requestId: string;
   /** Product / variation code (data plans, cable packages, WAEC product) */
   productCode?: string;
+  /** Catalog row description — the Peyflex adapter embeds its data-network id
+   *  here (`Peyflex · <network>`) when it seeds DATA plans. */
+  description?: string;
   /** Vendor/catalog provider key (e.g. 'MTN', 'GLO') — used by providers whose
    *  APIs key products by network (e.g. pairgate's provider_id slug). */
   provider?: string;

@@ -172,7 +172,8 @@ export class CatalogSyncService {
     total: number;
     pairgate: number;
     vtpass: number;
-    source: 'pairgate' | 'vtpass' | 'mixed' | 'empty';
+    peyflex: number;
+    source: 'pairgate' | 'vtpass' | 'peyflex' | 'mixed' | 'empty';
   }> {
     const items = await this.catalogModel
       .find(
@@ -182,12 +183,18 @@ export class CatalogSyncService {
       .lean();
     let pairgate = 0;
     let vtpass = 0;
+    let peyflex = 0;
     for (const item of items) {
       // Rows written before the vendor field existed are VTPass/static plans.
-      if (String(item.vendor ?? '').toLowerCase() === 'pairgate') {
-        pairgate++;
-      } else {
-        vtpass++;
+      switch (String(item.vendor ?? '').toLowerCase()) {
+        case 'pairgate':
+          pairgate++;
+          break;
+        case 'peyflex':
+          peyflex++;
+          break;
+        default:
+          vtpass++;
       }
     }
     const total = items.length;
@@ -195,14 +202,17 @@ export class CatalogSyncService {
       total,
       pairgate,
       vtpass,
+      peyflex,
       source:
         total === 0
           ? 'empty'
-          : pairgate > 0 && vtpass === 0
+          : pairgate > 0 && vtpass === 0 && peyflex === 0
             ? 'pairgate'
-            : vtpass > 0 && pairgate === 0
+            : vtpass > 0 && pairgate === 0 && peyflex === 0
               ? 'vtpass'
-              : 'mixed',
+              : peyflex > 0 && pairgate === 0 && vtpass === 0
+                ? 'peyflex'
+                : 'mixed',
     };
   }
 }

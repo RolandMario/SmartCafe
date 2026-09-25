@@ -16,11 +16,13 @@ export class CableService {
   ) {}
 
   async verify(dto: VerifyCableDto) {
-    const item = await this.catalogService.findByProvider(ServiceType.CABLE, dto.provider);
-    const providerCode = item?.productCode ?? dto.provider.toLowerCase();
+    // VTPass verifies cable smart cards against a per-brand serviceID
+    // (dstv | gotv | startimes), NOT a package variation code — the first
+    // catalog row's productCode the old lookup returned ("dstv-padi", ...) is
+    // rejected with "product does not exist". The provider enum maps 1:1.
     return this.vendorService.verifyCustomer({
       serviceType: ServiceType.CABLE,
-      provider: providerCode,
+      provider: dto.provider.toLowerCase(),
       identifier: dto.smartCardNumber,
     });
   }
@@ -48,9 +50,15 @@ export class CableService {
       },
       order: {
         productCode: pkg.productCode,
+        // Threads the catalog provider slug through to VTPass's buyCable so it
+        // can pick the right serviceID (dstv | gotv | startimes) — the variation
+        // code alone can't tell GOTV/StarTimes packages apart.
+        provider: pkg.provider,
         smartCardNumber: dto.smartCardNumber,
         phone: user?.phone ?? '',
       },
+      paymentWallet: dto.wallet,
+      cashback: pkg.commission ?? 0,
       pin: dto.pin,
     });
   }

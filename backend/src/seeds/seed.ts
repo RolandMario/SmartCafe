@@ -8,6 +8,10 @@ import {
   cleanDataPlanName,
   dataValidityDays,
 } from '../catalog/data-plan-sync';
+import {
+  CABLE_SERVICES,
+  cleanCablePlanName,
+} from '../catalog/cable-plan-sync';
 
 const uri = process.env.MONGODB_URI ?? 'mongodb://localhost:27017/vtu';
 
@@ -46,6 +50,7 @@ const walletSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', unique: true },
     balance: { type: Number, default: 0 },
+    cashbackBalance: { type: Number, default: 0 },
     currency: { type: String, default: 'NGN' },
   },
   { timestamps: true },
@@ -96,6 +101,7 @@ async function seedCatalog() {
 
   await syncWaecPricing();
   await syncJambPricing();
+  await syncCablePlans();
   const liveDataCodes = await syncDataPlans();
 
   // Remove stale DATA bundles — rows whose variation codes no longer exist in the
@@ -268,6 +274,100 @@ async function syncDataPlans(): Promise<Map<string, Set<string>> | null> {
 }
 
 /**
+ * Replace the CABLE catalog for every provider (DSTV / GOTV / StarTimes) with
+ * the REAL plans VTPass currently sells (GET /service-variations?serviceID=dstv,
+ * gotv, startimes) — the same treatment DATA gets. Upserts each live variation
+ * as an active catalog item (variation_code as productCode — the exact value
+ * /pay sends) with the current amount, and prunes rows whose codes are no longer
+ * sold (they would fail purchases with "product does not exist"). Falls back to
+ * the static seed (no-op) when VTPass isn't configured or unreachable.
+ */
+async function syncCablePlans() {
+  const rawBase = process.env.VTPASS_BASE_URL ?? '';
+  const apiKey = process.env.VTPASS_API_KEY ?? '';
+  const publicKey = process.env.VTPASS_PUBLIC_KEY ?? '';
+  if (!rawBase || !apiKey || !publicKey) {
+    console.log('[catalog] VTPass keys not set — keeping seeded CABLE plans');
+    return;
+  }
+  // VTPass endpoints live under /api (https://vtpass.com/api, ...). Bare-host env
+  // values (e.g. https://vtpass.com) 302-redirect-loop on /service-variations, so
+  // normalise to the /api mount when it isn't already there.
+  const host = rawBase.replace(/\/+$/, '');
+  const baseUrl = /\/api\/?$/i.test(host) ? host : `${host}/api`;
+
+  for (const svc of CABLE_SERVICES) {
+    let variations: Array<{
+      variation_code?: string;
+      variation_name?: string;
+      name?: string;
+      variation_amount?: string;
+    }> = [];
+    try {
+      const { data } = await axios.get(`${baseUrl}/service-variations`, {
+        params: { serviceID: svc.serviceID },
+        headers: { 'api-key': apiKey, 'public-key': publicKey },
+        timeout: 15000,
+      });
+      variations = data?.content?.variations ?? [];
+    } catch (err: any) {
+      console.warn(
+        `[catalog] ${svc.provider} cable: could not reach VTPass (${String(err?.message ?? err)}) — keeping seeded plans`,
+      );
+      continue;
+    }
+    if (variations.length === 0) {
+      console.warn(
+        `[catalog] ${svc.provider} cable: variation list empty for "${svc.serviceID}" — keeping seeded plans`,
+      );
+      continue;
+    }
+
+    const codes = new Set<string>();
+    // VTPass's live list occasionally repeats a variation_code for different
+    // plans (vendor data quirk). Dedupe, last occurrence wins.
+    const plans = new Map<string, { name: string; amount: number; index: number }>();
+    for (let i = 0; i < variations.length; i++) {
+      const variation = variations[i];
+      const productCode = String(variation?.variation_code ?? '').trim();
+      const rawName = String(variation?.variation_name ?? variation?.name ?? '').trim();
+      const amount = Number(variation?.variation_amount ?? NaN);
+      if (!productCode || !rawName || !Number.isFinite(amount) || amount <= 0) continue;
+      plans.set(productCode, { name: cleanCablePlanName(rawName), amount, index: i });
+    }
+    for (const [productCode, plan] of plans) {
+      codes.add(productCode);
+      await CatalogItem.updateOne(
+        { service: 'CABLE', provider: svc.provider, productCode },
+        {
+          $set: {
+            service: 'CABLE',
+            provider: svc.provider,
+            providerLabel: svc.providerLabel,
+            productCode,
+            name: plan.name,
+            amount: plan.amount,
+            sortOrder: plan.index + 1,
+            active: true,
+          },
+        },
+        { upsert: true },
+      );
+    }
+
+    const removed = await CatalogItem.deleteMany({
+      service: 'CABLE',
+      provider: svc.provider,
+      productCode: { $nin: [...codes] },
+    });
+    console.log(
+      `[catalog] ${svc.provider} cable: ${codes.size} live plans synced from "${svc.serviceID}"` +
+        (removed.deletedCount ? ` (removed ${removed.deletedCount} stale)` : ''),
+    );
+  }
+}
+
+/**
  * Keep WAEC catalog amounts in sync with the prices VTPass actually provides.
  *
  * Fetches each WAEC service's variation list from VTPass (GET /service-variations)
@@ -408,6 +508,7 @@ async function ensureUser(
   const wallet = await Wallet.create({
     user: user._id,
     balance: data.balance,
+    cashbackBalance: 0,
     currency: 'NGN',
   });
   console.log(

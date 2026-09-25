@@ -15,6 +15,7 @@ export enum VendorProviderName {
   VTPASS = 'vtpass',
   EBULKSMS = 'ebulksms',
   PAIRGATE = 'pairgate',
+  PEYFLEX = 'peyflex',
 }
 
 class EnvironmentVariables {
@@ -103,6 +104,21 @@ class EnvironmentVariables {
   @IsString()
   PAIRGATE_API_KEY: string = '';
 
+  // --- Peyflex provider (airtime / data / electricity — disabled by default) ---
+  // Peyflex vends airtime, data bundles and electricity tokens. It is NOT routed
+  // to automatically: an admin must explicitly pin a service to `peyflex` from
+  // the Vendors page. Once PEYFLEX_API_KEY is set, DATA catalog re-seeds include
+  // Peyflex plans side by side with Pairgate/VTPass (each seeded plan carries a
+  // `Peyflex · <network>` description used at purchase time). Auth is a Token
+  // header on every request.
+  @IsOptional()
+  @IsString()
+  PEYFLEX_BASE_URL: string = 'https://client.peyflex.com.ng';
+
+  @IsOptional()
+  @IsString()
+  PEYFLEX_API_KEY: string = '';
+
   // --- Monnify payment gateway (wallet funding) ---
   @IsOptional()
   @IsString()
@@ -152,6 +168,13 @@ class EnvironmentVariables {
   @IsOptional()
   @IsBoolean()
   PAYSTACK_WEBHOOK_INSECURE: boolean = false;
+
+  @IsOptional()
+  @IsString()
+  // Bank used to back dedicated virtual accounts (bank-transfer wallet funding).
+  // Paystack slugs: 'wema-bank' | 'providus-bank' | 'titan-paystack' (live),
+  // 'test-bank' (test mode).
+  PAYSTACK_DVA_PREFERRED_BANK: string = 'wema-bank';
 
   // --- Email delivery (nodemailer SMTP) ---
   // Used to send password-reset verification codes. Leave SMTP_HOST empty to

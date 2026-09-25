@@ -9,6 +9,13 @@ export class Wallet extends Document {
   @Prop({ type: Number, default: 0, min: 0 })
   balance: number;
 
+  /**
+   * Cashback earned on successful purchases. Never withdrawable — it can only
+   * be spent as a payment source on future purchases.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  cashbackBalance: number;
+
   @Prop({ default: 'NGN' })
   currency: string;
 }
