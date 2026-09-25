@@ -1,5 +1,6 @@
 import { BadGatewayException, NotFoundException } from '@nestjs/common';
 import { DedicatedAccountService } from './dedicated-account.service';
+import { FundingStatus } from '../common/enums';
 
 // Any valid 24-hex ObjectId; only passed around, never queried against.
 const UID = '507f1f77bcf86cd799439011';
@@ -25,6 +26,8 @@ function doc(overrides: Record<string, any>) {
 describe('DedicatedAccountService — Paystack DVA', () => {
   const model = { findOne: jest.fn(), create: jest.fn() };
   const userModel = { findById: jest.fn() };
+  const fundingModel = { findOne: jest.fn(), create: jest.fn() };
+  const connection = { startSession: jest.fn() };
   const paystack = {
     isConfigured: jest.fn(() => true),
     getOrCreateCustomer: jest.fn(),
@@ -32,6 +35,7 @@ describe('DedicatedAccountService — Paystack DVA', () => {
     listCustomerDedicatedAccounts: jest.fn(),
     requeryDedicatedAccount: jest.fn(),
   };
+  const walletService = { credit: jest.fn() };
   let service: DedicatedAccountService;
 
   function user() {
@@ -40,7 +44,14 @@ describe('DedicatedAccountService — Paystack DVA', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new DedicatedAccountService(model as any, userModel as any, paystack as any);
+    service = new DedicatedAccountService(
+      model as any,
+      userModel as any,
+      fundingModel as any,
+      connection as any,
+      paystack as any,
+      walletService as any,
+    );
   });
 
   describe('getOrCreate — first creation', () => {
@@ -242,4 +253,174 @@ describe('DedicatedAccountService — Paystack DVA', () => {
       expect(model.create).not.toHaveBeenCalled();
     });
   });
+  describe('handleCreditWebhook — DVA deposits auto-credit the wallet', () => {
+    /** A realistic Paystack `charge.success` receipt for a DVA transfer. */
+    function dvaDeposit(overrides: Record<string, any> = {}) {
+      return {
+        event: 'charge.success',
+        data: {
+          channel: 'dedicated_nuban',
+          reference: '2143762048',
+          amount: 500000,
+          currency: 'NGN',
+          customer: {
+            customer_code: 'CUS_abc',
+            email: 'ada@x.io',
+            first_name: 'Ada',
+            last_name: 'Lovelace',
+          },
+          authorization: {
+            channel: 'dedicated_nuban',
+            receiver_bank_account_number: '8123456789',
+          },
+          ...overrides,
+        },
+      };
+    }
+
+    function fakeSession() {
+      return {
+        withTransaction: jest.fn(async (cb: () => Promise<void>) => cb()),
+        endSession: jest.fn().mockResolvedValue(undefined),
+      };
+    }
+
+    function matchedDva() {
+      return doc({
+        status: 'active',
+        accountNumber: '8123456789',
+        user: UID,
+        bankName: 'Wema Bank',
+        save: jest.fn().mockResolvedValue(undefined),
+      });
+    }
+
+    it('detects DVA receipts via data.channel or authorization.channel only', () => {
+      expect(DedicatedAccountService.isDvaCreditEvent(dvaDeposit())).toBe(true);
+      expect(
+        DedicatedAccountService.isDvaCreditEvent(
+          dvaDeposit({
+            channel: undefined,
+            authorization: { channel: 'dedicated_nuban' },
+          }),
+        ),
+      ).toBe(true);
+      expect(
+        DedicatedAccountService.isDvaCreditEvent(dvaDeposit({ channel: 'card' })),
+      ).toBe(false);
+      expect(
+        DedicatedAccountService.isDvaCreditEvent(
+          dvaDeposit({ channel: 'bank_transfer' }),
+        ),
+      ).toBe(false);
+      expect(
+        DedicatedAccountService.isDvaCreditEvent({
+          event: 'dedicatedaccount.assign.success',
+          data: { channel: 'dedicated_nuban' },
+        }),
+      ).toBe(false);
+      expect(
+        DedicatedAccountService.isDvaCreditEvent({
+          event: 'charge.success',
+          data: {},
+        }),
+      ).toBe(false);
+    });
+
+    it('credits the wallet and records a credited funding row for a matched customer', async () => {
+      const dva = matchedDva();
+      model.findOne.mockResolvedValue(dva);
+      // First delivery → no funding row yet. Chainable query (has .session()).
+      fundingModel.findOne.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+      connection.startSession.mockResolvedValue(fakeSession());
+      fundingModel.create.mockResolvedValue([{}]);
+      walletService.credit.mockResolvedValue({});
+
+      await service.handleCreditWebhook(dvaDeposit());
+
+      expect(model.findOne).toHaveBeenCalledWith({
+        $or: [{ customerCode: 'CUS_abc' }, { accountNumber: '8123456789' }],
+      });
+      const funding = fundingModel.create.mock.calls[0][0][0];
+      expect(funding.paymentReference).toBe('2143762048');
+      expect(funding.reference).toBe('DVA-2143762048');
+      expect(funding.amount).toBe(5000); // kobo → naira
+      expect(funding.status).toBe(FundingStatus.CREDITED);
+      expect(funding.provider).toBe('paystack');
+      expect(funding.method).toBe('Bank transfer (DVA)');
+      expect(walletService.credit).toHaveBeenCalledWith(
+        UID,
+        5000,
+        'Wallet funding (2143762048)',
+        undefined,
+        expect.anything(), // the Mongoose session
+      );
+      expect((dva as any).providerMeta?.latestDeposit?.reference).toBe('2143762048');
+      expect(dva.save).toHaveBeenCalled();
+    });
+
+    it('is idempotent — a retry with the same reference never double-credits', async () => {
+      const dva = matchedDva();
+      model.findOne.mockResolvedValue(dva);
+      // Second delivery → the funding row now exists as credited.
+      fundingModel.findOne.mockReturnValue({
+        session: jest.fn().mockResolvedValue({ status: FundingStatus.CREDITED }),
+      });
+      connection.startSession.mockResolvedValue(fakeSession());
+      fundingModel.create.mockResolvedValue([{}]);
+      walletService.credit.mockResolvedValue({});
+
+      await service.handleCreditWebhook(dvaDeposit());
+      await service.handleCreditWebhook(dvaDeposit());
+
+      expect(fundingModel.create).not.toHaveBeenCalled();
+      expect(walletService.credit).not.toHaveBeenCalled();
+    });
+
+    it('ignores deposits that match no DVA row', async () => {
+      model.findOne.mockResolvedValue(null);
+
+      await service.handleCreditWebhook(dvaDeposit());
+
+      expect(fundingModel.create).not.toHaveBeenCalled();
+      expect(walletService.credit).not.toHaveBeenCalled();
+      expect(connection.startSession).not.toHaveBeenCalled();
+    });
+
+    it('falls back to matching by account number when customer code is absent', async () => {
+      model.findOne.mockResolvedValue(matchedDva());
+      fundingModel.findOne.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+      connection.startSession.mockResolvedValue(fakeSession());
+      fundingModel.create.mockResolvedValue([{}]);
+      walletService.credit.mockResolvedValue({});
+
+      await service.handleCreditWebhook(
+        dvaDeposit({
+          customer: undefined,
+          authorization: { receiver_bank_account_number: '8123456789' },
+        }),
+      );
+
+      expect(model.findOne).toHaveBeenCalledWith({ accountNumber: '8123456789' });
+      expect(walletService.credit).toHaveBeenCalled();
+    });
+
+    it('ignores malformed receipts (missing reference/amount, non-numeric, non-NGN)', async () => {
+      await service.handleCreditWebhook(dvaDeposit({ reference: undefined }));
+      await service.handleCreditWebhook(dvaDeposit({ amount: undefined }));
+      await service.handleCreditWebhook(dvaDeposit({ amount: 'abc' }));
+      await service.handleCreditWebhook(dvaDeposit({ amount: -100 }));
+      await service.handleCreditWebhook(dvaDeposit({ currency: 'USD' }));
+
+      expect(model.findOne).not.toHaveBeenCalled();
+      expect(connection.startSession).not.toHaveBeenCalled();
+      expect(fundingModel.create).not.toHaveBeenCalled();
+      expect(walletService.credit).not.toHaveBeenCalled();
+    });
+  });
+
 });

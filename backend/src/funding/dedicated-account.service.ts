@@ -4,12 +4,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { DedicatedAccount } from './schemas/dedicated-account.schema';
 import { PaystackService } from '../payments/paystack.service';
 import { User } from '../users/schemas/user.schema';
 import { PaystackDedicatedAccountData } from '../payments/paystack.types';
+import { Funding } from './schemas/funding.schema';
+import { FundingStatus } from '../common/enums';
+import { WalletService } from '../wallet/wallet.service';
 
 /** Paystack errors returned when the customer already has a DVA. */
 const DUPLICATE_DVA_RE =
@@ -50,7 +53,10 @@ export class DedicatedAccountService {
     @InjectModel(DedicatedAccount.name)
     private model: Model<DedicatedAccount>,
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(Funding.name) private fundingModel: Model<Funding>,
+    @InjectConnection() private connection: Connection,
     private paystack: PaystackService,
+    private walletService: WalletService,
   ) {}
 
   static toView(doc: DedicatedAccount | null): DedicatedAccountView | null {
@@ -263,5 +269,152 @@ export class DedicatedAccountService {
         `DVA requery failed for ${doc.customerCode}: ${String(e)}`,
       );
     }
+  }
+
+  /**
+   * True when a Paystack webhook is a bank transfer deposited into a dedicated
+   * virtual account. Paystack sends DVA receipts as plain `charge.success`
+   * events — there is no separate `dedicatedaccount.credit` event — and the
+   * channel (`data.channel` and/or `data.authorization.channel`) is what tells
+   * the transfer landed on the virtual account number. Checkout payments via
+   * card/bank-transfer use other channels and are never matched here.
+   */
+  static isDvaCreditEvent(payload: Record<string, any>): boolean {
+    if (String(payload?.event ?? '') !== 'charge.success') return false;
+    const data = payload?.data ?? {};
+    const channel = String(data.channel ?? data.authorization?.channel ?? '');
+    return channel === 'dedicated_nuban';
+  }
+
+  /**
+   * Credit a user's wallet for money transferred into their dedicated virtual
+   * account (`charge.success` with channel `dedicated_nuban`), completing the
+   * funding flow end-to-end.
+   *
+   *  1. Match the DVA row by Paystack customer code (fallback: the receiving
+   *     account number) so the deposit reaches the right app user.
+   *  2. Create a `credited` funding record keyed on the deposit's own Paystack
+   *     reference — never a user-generated `FND...` reference, so it cannot
+   *     collide with checkout/manual funding.
+   *  3. Credit the wallet inside the same MongoDB transaction, so a crash
+   *     between the two can never record money without crediting (or credit
+   *     without a record).
+   *
+   * Idempotency: Paystack retries webhooks until acknowledged, so the first
+   * delivery to win writes the record + credits the wallet; every later
+   * delivery finds the existing record and no-ops. A concurrent duplicate that
+   * loses the unique-`reference` race surfaces as duplicate-key (11000) and is
+   * treated as already processed.
+   */
+  async handleCreditWebhook(payload: Record<string, any>): Promise<void> {
+    if (!DedicatedAccountService.isDvaCreditEvent(payload)) return;
+
+    const data = payload?.data ?? {};
+    const providerReference = String(data.reference ?? '');
+    if (!providerReference) {
+      this.logger.warn('DVA charge.success webhook missing data.reference');
+      return;
+    }
+    const currency = String(data.currency ?? 'NGN').toUpperCase();
+    if (currency !== 'NGN') {
+      this.logger.warn(
+        `Ignoring DVA deposit ${providerReference} in ${currency} (only NGN supported)`,
+      );
+      return;
+    }
+    const amountKobo = Number(data.amount);
+    if (!Number.isFinite(amountKobo) || amountKobo <= 0) {
+      this.logger.warn(
+        `Ignoring DVA deposit ${providerReference} with invalid amount ${data.amount}`,
+      );
+      return;
+    }
+
+    // Match to our user — DVA rows are keyed by Paystack customer code, and
+    // the receiving account number is a safe fallback some payloads carry.
+    const customerCode = String(
+      data.customer?.customer_code ?? data.customer_code ?? '',
+    );
+    const accountNumber = String(
+      data.authorization?.receiver_bank_account_number ?? '',
+    );
+    const dva = await this.model.findOne(
+      customerCode && accountNumber
+        ? { $or: [{ customerCode }, { accountNumber }] }
+        : customerCode
+          ? { customerCode }
+          : accountNumber
+            ? { accountNumber }
+            : { _id: null },
+    );
+    if (!dva) {
+      this.logger.warn(
+        `Ignoring DVA deposit ${providerReference} for unknown customer ${
+          customerCode || accountNumber || '(no identifier)'
+        }`,
+      );
+      return;
+    }
+
+    const amount = amountKobo / 100; // wire amounts are in kobo
+    const session = await this.connection.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const existing = await this.fundingModel
+          .findOne({ paymentReference: providerReference })
+          .session(session);
+        if (existing) return; // already processed by an earlier delivery
+
+        await this.fundingModel.create(
+          [
+            {
+              user: dva.user,
+              amount,
+              reference: `DVA-${providerReference}`,
+              paymentReference: providerReference,
+              status: FundingStatus.CREDITED,
+              provider: 'paystack',
+              method: 'Bank transfer (DVA)',
+              adminNote: `Received${dva.accountNumber ? ` into ${dva.accountNumber}` : ''} (${dva.bankName ?? 'dedicated account'})`,
+              processedAt: new Date(),
+            },
+          ],
+          { session },
+        );
+        await this.walletService.credit(
+          dva.user.toString(),
+          amount,
+          `Wallet funding (${providerReference})`,
+          undefined,
+          session,
+        );
+      });
+    } catch (e: any) {
+      // A concurrent delivery already claimed this deposit — safe to no-op.
+      if (e?.code === 11000) {
+        this.logger.log(
+          `DVA deposit ${providerReference} already processed by a concurrent delivery`,
+        );
+      } else {
+        throw e;
+      }
+    } finally {
+      await session.endSession();
+    }
+
+    // Audit trail on the DVA row (outside the transaction — informational).
+    dva.providerMeta = {
+      ...(dva.providerMeta ?? {}),
+      latestDeposit: { reference: providerReference, amount, paidAt: new Date() },
+    };
+    await dva.save().catch((e) =>
+      this.logger.warn(
+        `DVA audit update failed (${providerReference}): ${String(e)}`,
+      ),
+    );
+
+    this.logger.log(
+      `Credited wallet ₦${amount} for DVA deposit ${providerReference}`,
+    );
   }
 }

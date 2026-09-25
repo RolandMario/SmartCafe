@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -235,6 +236,15 @@ export class PaystackService implements PaymentGateway {
    * customers by email, so we look the customer up first — a customer may
    * already exist from a previous checkout or DVA creation and creating it a
    * second time would 400.
+   *
+   * A phone is mandatory for DVA customers: the create endpoint rejects
+   * phone-less customers AND DVA banks validate the customer's phone. But
+   * `/transaction/initialize` (card checkout) auto-creates customers carrying
+   * only an email. Two guard-rails keep DVA creation working:
+   *  1. A missing phone on the app user is rejected here with a clear message
+   *     instead of surfacing Paystack's cryptic upstream validation error.
+   *  2. An existing customer with no phone on file is backfilled via
+   *     `PUT /customer/:code` before its code is returned.
    */
   async getOrCreateCustomer(params: {
     email: string;
@@ -243,17 +253,47 @@ export class PaystackService implements PaymentGateway {
   }): Promise<{ customerCode: string }> {
     const { email, name, phone } = params;
     const [first, ...rest] = (name ?? '').trim().split(/\s+/);
+    const firstName = first || 'Customer';
+    const lastName = rest.join(' ') || 'Guest';
 
+    if (!phone) {
+      throw new BadRequestException(
+        'A phone number is required to create a bank-transfer account. Please add a phone number to your profile and try again.',
+      );
+    }
+    // Same format rule the register/profile DTOs enforce — fail here with an
+    // actionable message instead of a Paystack validation error.
+    if (!/^(\+?234|0)[789][01]\d{8}$/.test(phone)) {
+      throw new BadRequestException(
+        `The phone number on your profile (${phone}) is not a valid Nigerian number. Please update it and try again.`,
+      );
+    }
+
+    let found: PaystackCustomerResponse | null = null;
     try {
-      const found = await this.request<PaystackCustomerResponse>({
+      found = await this.request<PaystackCustomerResponse>({
         method: 'get',
         url: `/customer/${encodeURIComponent(email)}`,
       });
-      if (found?.data?.customer_code) {
-        return { customerCode: found.data.customer_code };
-      }
     } catch {
       // 404 (unknown customer) or transient issue → fall through to create.
+    }
+
+    if (found?.data?.customer_code) {
+      // A customer created by a card checkout carries no phone and DVA banks
+      // reject it — backfill before handing the code back.
+      if (!found.data.phone) {
+        await this.request({
+          method: 'put',
+          url: `/customer/${encodeURIComponent(found.data.customer_code)}`,
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            phone,
+          },
+        });
+      }
+      return { customerCode: found.data.customer_code };
     }
 
     const created = await this.request<PaystackCustomerResponse>({
@@ -261,9 +301,9 @@ export class PaystackService implements PaymentGateway {
       url: '/customer',
       data: {
         email,
-        first_name: first || 'Customer',
-        last_name: rest.join(' ') || 'Guest',
-        ...(phone ? { phone } : {}),
+        first_name: firstName,
+        last_name: lastName,
+        phone,
       },
     });
     if (!created?.status || !created?.data?.customer_code) {
@@ -273,7 +313,46 @@ export class PaystackService implements PaymentGateway {
     }
     return { customerCode: created.data.customer_code };
   }
-/**
+  /**
+   * Banks only valid with a LIVE key. In test mode Paystack exposes exactly one
+   * DVA bank ('test-bank'); sending a live-only slug with a sk_test_... key fails
+   * every create with "wema-bank is not available in test mode".
+   */
+  private readonly liveOnlyDvaBanks = [
+    'wema-bank',
+    'providus-bank',
+    'titan-paystack',
+  ];
+
+  /**
+   * The configured DVA bank, corrected to match the secret key's environment so
+   * the feature works out of the box: a live-only bank under a test key becomes
+   * 'test-bank' (and 'test-bank' under a live key becomes 'wema-bank'), with a
+   * warning logged so the mismatch is visible instead of failing at runtime.
+   */
+  private get configuredDvaBank(): string {
+    const configured = this.config.get<string>(
+      'PAYSTACK_DVA_PREFERRED_BANK',
+      'wema-bank',
+    );
+    const key = this.secretKey();
+    if (!key.startsWith('sk_live_')) {
+      if (this.liveOnlyDvaBanks.includes(configured)) {
+        this.logger.warn(
+          `PAYSTACK_DVA_PREFERRED_BANK="${configured}" is a live-only bank but the current key (${key.slice(0, 8)}...) is not a live key — using "test-bank" instead.`,
+        );
+        return 'test-bank';
+      }
+    } else if (configured === 'test-bank') {
+      this.logger.warn(
+        'PAYSTACK_DVA_PREFERRED_BANK="test-bank" is not available in live mode — using "wema-bank" instead.',
+      );
+      return 'wema-bank';
+    }
+    return configured;
+  }
+
+  /**
    * Create a dedicated virtual account for an existing customer.
    *
    * Assignment is synchronous for some banks (`assigned: true` with an
@@ -287,10 +366,8 @@ export class PaystackService implements PaymentGateway {
     customerCode: string;
     preferredBank?: string;
   }): Promise<PaystackDedicatedAccountData> {
-    const preferredBank =
-      params.preferredBank ??
-      this.config.get<string>('PAYSTACK_DVA_PREFERRED_BANK', 'wema-bank');
-    const { data } = await this.request<PaystackCreateDedicatedAccountResponse>({
+    const preferredBank = params.preferredBank ?? this.configuredDvaBank;
+    const response = await this.request<PaystackCreateDedicatedAccountResponse>({
       method: 'post',
       url: '/dedicated_account',
       data: {
@@ -298,12 +375,12 @@ export class PaystackService implements PaymentGateway {
         preferred_bank: preferredBank,
       },
     });
-    if (!data?.status || !data?.data) {
+    if (!response?.status || !response?.data) {
       throw new BadGatewayException(
-        `Paystack dedicated account creation failed: ${data?.message ?? 'unknown error'}`,
+        `Paystack dedicated account creation failed: ${response?.message ?? 'unknown error'}`,
       );
     }
-    return data.data;
+    return response.data;
   }
 
   /** List dedicated accounts belonging to a customer (normally 0 or 1). */
@@ -332,7 +409,7 @@ export class PaystackService implements PaymentGateway {
     customerCode?: string;
     accountNumber?: string;
   }): Promise<Record<string, any>> {
-    const { data } = await this.request<PaystackRequeryDedicatedAccountResponse>({
+    const response = await this.request<PaystackRequeryDedicatedAccountResponse>({
       method: 'post',
       url: '/dedicated_account/requery',
       data: {
@@ -340,11 +417,11 @@ export class PaystackService implements PaymentGateway {
         ...(params.accountNumber ? { account_number: params.accountNumber } : {}),
       },
     });
-    if (!data?.status || !data?.data) {
+    if (!response?.status || !response?.data) {
       throw new BadGatewayException(
-        `Paystack dedicated account requery failed: ${data?.message ?? 'unknown error'}`,
+        `Paystack dedicated account requery failed: ${response?.message ?? 'unknown error'}`,
       );
     }
-    return data.data;
+    return response.data;
   }
 }

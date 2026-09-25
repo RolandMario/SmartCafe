@@ -7,7 +7,10 @@ export class Funding extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   user: Types.ObjectId;
 
-  @Prop({ type: Number, required: true, min: 100 })
+  // No floor here: bank-transfer DVA deposits can be any amount and are created
+  // directly by the webhook. The user-facing DepositDto still enforces a ₦100
+  // minimum for checkout/manual funding.
+  @Prop({ type: Number, required: true, min: 0 })
   amount: number;
 
   @Prop({ required: true, unique: true })

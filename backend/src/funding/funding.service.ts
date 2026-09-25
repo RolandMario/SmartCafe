@@ -210,6 +210,18 @@ export class FundingService {
       return { received: true };
     }
 
+    // DVA deposits arrive as `charge.success` with channel `dedicated_nuban`
+    // (Paystack has no `dedicatedaccount.credit` event). Their reference is
+    // Paystack-generated and matches no funding request, so route them to the
+    // credit handler before the funding-reference lookup below.
+    if (
+      provider === 'paystack' &&
+      DedicatedAccountService.isDvaCreditEvent(payload)
+    ) {
+      await this.dedicatedAccounts.handleCreditWebhook(payload);
+      return { received: true };
+    }
+
     const { eventClass, providerEventType } = gateway.classifyWebhookEvent(payload);
     const paymentReference = gateway.extractPaymentReference(payload);
     if (!paymentReference) {

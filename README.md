@@ -228,6 +228,27 @@ Setup for Paystack:
    always signs requests with the `x-paystack-signature` header (HMAC-SHA512
    of the raw body with your secret key) — even in test mode.
 
+Bank-transfer top-ups use a **dedicated virtual account (DVA)**: `POST
+/api/funding/dva` mints a personal account number per user. The backing bank
+defaults to `wema-bank` (override with `PAYSTACK_DVA_PREFERRED_BANK`; live
+slugs `wema-bank` | `providus-bank` | `titan-paystack`, test mode `test-bank`)
+and is auto-corrected when it can't work with the current key's environment.
+Wema/Providus assign asynchronously — Paystack then delivers a
+`dedicatedaccount.assign.success` webhook (matched by customer code) which
+finalizes the account; `GET /api/funding/dva` also re-checks pending
+assignments via `/dedicated_account/requery`.
+
+Deposits into the account are **credited automatically**: Paystack returns them
+to the same webhook as a regular `charge.success` event whose `channel` /
+`authorization.channel` is `dedicated_nuban` (there is no separate
+`dedicatedaccount.credit` event). The backend matches the deposit to the user's
+DVA by `customer.customer_code` (falling back to
+`authorization.receiver_bank_account_number`), writes a `credited` funding
+record keyed on Paystack's own reference, and credits the wallet — all in one
+MongoDB transaction. Paystack webhook retries are idempotent (the first
+successful delivery wins), so a transfer shows up in the wallet within seconds
+with no manual step.
+
 Flow: `POST /funding/deposit` returns a `checkoutUrl` → the app opens it in the
 browser → the gateway redirects to the configured redirect URL (or the derived
 callback) → the server verifies the transaction against the gateway API and
