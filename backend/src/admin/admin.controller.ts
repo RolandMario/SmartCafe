@@ -36,7 +36,7 @@ import { VendorService } from '../vendors/vendor.service';
 import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
 import { PaymentProvider } from '../payments/payment-gateway.interface';
 
-class CreditWalletDto {
+class WalletAdjustDto {
   @ApiProperty({ minimum: 1 })
   @Type(() => Number)
   @IsNumber()
@@ -219,8 +219,14 @@ export class AdminController {
 
   @Post('users/:id/credit')
   @ApiOperation({ summary: 'Manually credit a user wallet' })
-  creditWallet(@Param('id') id: string, @Body() dto: CreditWalletDto) {
+  creditWallet(@Param('id') id: string, @Body() dto: WalletAdjustDto) {
     return this.walletService.credit(id, dto.amount, dto.note ?? 'Admin credit');
+  }
+
+  @Post('users/:id/debit')
+  @ApiOperation({ summary: 'Manually debit a user wallet' })
+  debitWallet(@Param('id') id: string, @Body() dto: WalletAdjustDto) {
+    return this.walletService.debit(id, dto.amount, dto.note ?? 'Admin debit');
   }
 
   // ---------------- Catalog ----------------
