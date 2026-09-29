@@ -256,6 +256,11 @@ export class VtpassProvider implements VendorProvider {
     const legacyToken = String(txn?.unique_element?.value ?? '').trim();
     const token = mainToken || legacyToken;
 
+    // Prepaid electricity deliveries report the number of energy units vended.
+    // Current VTPass responses carry `units` at the response root (e.g.
+    // "79.9 kWh"); older payloads placed it inside content.transactions.
+    const units = txn?.units ?? payload?.units ?? null;
+
     // JAMB deliveries carry the PIN at the response root as `Pin` / `purchased_code`
     // (formatted "Pin : 3678251321392432"). Normalise it so receipts show clean digits.
     const jambPin = String(payload?.Pin ?? payload?.pin ?? '')
@@ -290,6 +295,8 @@ export class VtpassProvider implements VendorProvider {
         ...(mainToken ? { mainToken } : {}),
         ...(bonusToken ? { bonusToken } : {}),
         ...(balanceToken ? { balanceToken } : {}),
+        // Purchased energy units for prepaid electricity (e.g. "79.9 kWh").
+        ...(units != null && String(units).trim() !== '' ? { units } : {}),
         // A single PIN/serial maps to the legacy single fields; multiple to arrays.
         ...(pins.length === 1 ? { pin: pins[0], ...(serials[0] ? { serial: serials[0] } : {}) } : {}),
         ...(pins.length > 1 ? { pins, ...(serials.length ? { serials } : {}) } : {}),

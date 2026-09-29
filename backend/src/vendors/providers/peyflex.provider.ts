@@ -638,6 +638,8 @@ export class PeyflexProvider implements VendorProvider {
           plan: payload.plan,
           balanceAfter: payload.balance,
           reference: payload.reference,
+          // Prepaid vends may report purchased energy units — surface on receipts.
+          ...(payload.units != null ? { units: payload.units } : {}),
         },
       };
     } catch (err: any) {
