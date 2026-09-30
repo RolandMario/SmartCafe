@@ -63,6 +63,37 @@ export interface CustomerVerification {
   extra?: Record<string, any>;
 }
 
+/**
+ * The customer's current cable plan returned by verification, normalised from
+ * the vendor's raw /merchant-verify payload (VTPass returns flat Customer_Name /
+ * Product_Code / Product_Name / Due_Date / Renewal_Amount fields for DSTV,
+ * while GOTV/StarTimes nest the active product). Surfaced to the mobile app so
+ * the cable purchase screen can render a "Renew" button for the exact plan the
+ * customer is already on.
+ */
+export interface CableCurrentPlan {
+  /** VTPass variation_code of the customer's current plan (e.g. 'dstv-confam'). */
+  productCode?: string;
+  /** Plan display name (e.g. 'DStv Confam'). */
+  name: string;
+  /** Subscription expiry / due date, as returned by the vendor. */
+  dueDate?: string;
+  /** Renewal amount in naira — from the vendor or our catalog. */
+  amount?: number;
+}
+
+/** Catalog-matched package for the customer's current plan — what "Renew" buys. */
+export interface CableRenewal {
+  /** Catalog item _id — the exact `packageId` the purchase endpoint expects. */
+  packageId: string;
+  productCode: string;
+  name: string;
+  /** Sales price in naira (catalog amount, falling back to the vendor's renewal amount). */
+  amount: number;
+  /** Cashback / commission config for this plan. */
+  commission: number;
+}
+
 export interface VerifyParams {
   serviceType: ServiceType;
   provider: string;

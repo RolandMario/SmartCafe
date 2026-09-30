@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ServiceType } from '../../common/enums';
 import {
+  CableCurrentPlan,
   CustomerVerification,
   ProviderPriceItem,
   RequeryParams,
@@ -9,6 +10,7 @@ import {
   VendorProvider,
   VendorResult,
 } from '../vendor-provider.interface';
+import { normalizeCablePlan } from './cable-verify.helper';
 
 /**
  * Simulated vendor used for local development and demos.
@@ -18,6 +20,36 @@ import {
 @Injectable()
 export class MockProvider implements VendorProvider, OnModuleInit {
   readonly name = 'mock';
+
+  /** Simulated current-plan catalogue — codes/amounts mirror the CABLE seed
+   *  (dstv-padi … dstv7, gotv-smallie … gotv-supa, StarTimes dish/antenna) so a
+   *  verified customer's plan always maps to a real catalog row via the cable
+   *  service and the Renew button has a package to purchase. */
+  private static readonly CABLE_PLAN_CATALOG: Record<
+    string,
+    { code: string; name: string; amount: number }[]
+  > = {
+    DSTV: [
+      { code: 'dstv-padi', name: 'DStv Padi', amount: 4400 },
+      { code: 'dstv-yanga', name: 'DStv Yanga', amount: 6000 },
+      { code: 'dstv-confam', name: 'DStv Confam', amount: 11000 },
+      { code: 'dstv79', name: 'DStv Compact', amount: 19000 },
+      { code: 'dstv7', name: 'DStv Compact Plus', amount: 30000 },
+    ],
+    GOTV: [
+      { code: 'gotv-smallie', name: 'GOtv Smallie', amount: 1900 },
+      { code: 'gotv-jinja', name: 'GOtv Jinja', amount: 3900 },
+      { code: 'gotv-jolli', name: 'GOtv Jolli', amount: 5800 },
+      { code: 'gotv-max', name: 'GOtv Max', amount: 8500 },
+      { code: 'gotv-supa', name: 'GOtv Supa', amount: 11400 },
+    ],
+    STARTIMES: [
+      { code: 'nova', name: 'StarTimes Nova (Dish)', amount: 2100 },
+      { code: 'basic', name: 'StarTimes Basic (Antenna)', amount: 4000 },
+      { code: 'smart', name: 'StarTimes Basic (Dish)', amount: 5100 },
+      { code: 'classic', name: 'StarTimes Classic (Antenna)', amount: 6000 },
+    ],
+  };
   readonly supportedServices: ServiceType[] = [
     ServiceType.AIRTIME,
     ServiceType.DATA,
@@ -98,6 +130,16 @@ export class MockProvider implements VendorProvider, OnModuleInit {
     const names = ['ADEBAYO OJO', 'CHINWE OKAFOR', 'MUSA IBRAHIM', 'NGOZI EZE', 'TUNDE ADEOYE', 'FATIMA BELLO'];
     const idx = Number(this.hashIdentifiers(identifier).slice(0, 2)) % names.length;
     return names[idx];
+  }
+
+  /** Deterministic "current subscription" for a smart card — plan, due date (14
+   *  days out) and renewal amount, shaped like VTPass's DSTV verify payload. */
+  private currentCablePlan(provider: string, identifier: string): CableCurrentPlan {
+    const key = provider.toUpperCase();
+    const plans = MockProvider.CABLE_PLAN_CATALOG[key] ?? MockProvider.CABLE_PLAN_CATALOG.DSTV;
+    const plan = plans[Number(this.hashIdentifiers(identifier).slice(0, 2)) % plans.length];
+    const dueDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+    return { productCode: plan.code, name: plan.name, dueDate, amount: plan.amount };
   }
 
   async buyAirtime(order: VendorOrder): Promise<VendorResult> {
@@ -273,6 +315,34 @@ export class MockProvider implements VendorProvider, OnModuleInit {
         address: `23 Power Street, ${params.provider}`,
         customerRef: `EL-${this.hashIdentifiers(params.identifier).slice(0, 8)}`,
         extra: { meterType: params.subType ?? 'prepaid' },
+      };
+    }
+    if (params.serviceType === ServiceType.CABLE) {
+      const plan = this.currentCablePlan(params.provider, params.identifier);
+      // Mirror VTPass's LIVE /merchant-verify payload (Current_Bouquet* shape) —
+      // NOT the older Product_* shape — so the mock exercises the exact field
+      // mapping production relies on (normalizeCablePlan), including the
+      // UNKNOWN-code fallback and the name price-token cleanup.
+      const raw = {
+        Customer_Name: name,
+        Status: 'ACTIVE',
+        Current_Bouquet: plan.name,
+        Current_Bouquet_Code: plan.productCode,
+        Current_Bouquet_Price: String(plan.amount),
+        Due_Date: plan.dueDate,
+        Renewal_Amount: String(plan.amount),
+        Customer_Type: params.provider.toUpperCase(),
+        Customer_Number: params.identifier,
+      };
+      return {
+        name,
+        customerRef: `CS-${this.hashIdentifiers(params.identifier).slice(0, 8)}`,
+        extra: {
+          ...raw,
+          // Derived through the same normaliser VTPass uses so the mock and
+          // production can never drift apart.
+          currentPlan: normalizeCablePlan(raw),
+        },
       };
     }
     return {

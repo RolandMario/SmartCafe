@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { ServiceType } from '../../common/enums';
 import {
+  CableCurrentPlan,
   CustomerVerification,
   ProviderPriceItem,
   RequeryParams,
@@ -26,6 +27,8 @@ import {
   cleanCablePlanName,
   staticCablePlanRows,
 } from '../../catalog/cable-plan-sync';
+
+import { firstValue, normalizeCablePlan } from './cable-verify.helper';
 
 /**
  * VTPass provider adapter. Covers all platform services:
@@ -649,12 +652,43 @@ export class VtpassProvider implements VendorProvider {
       body.type = params.subType;
     }
     const { data } = await this.client.post('/merchant-verify', body);
-    const content = data?.content ?? {};
+    const content = (data?.content ?? {}) as Record<string, any>;
+    const extra: Record<string, any> = { ...content };
+    if (params.serviceType === ServiceType.CABLE) {
+      // VTPass reports verify failures with a numeric code (or a
+      // `response_description` carrying the code) plus a human message —
+      // surface those as a clear 400 instead of silently returning a bogus
+      // 'CUSTOMER' result the mobile screen has to guess at.
+      const code = String(data?.code ?? data?.response_description ?? '').trim();
+      const description = String(data?.response_description ?? '').trim();
+      const explicitError =
+        (/^\d{3}$/.test(code) && code !== '000') ||
+        typeof content?.error === 'string' ||
+        /fail|invalid|not found|unable|does not exist/i.test(description);
+      if (explicitError) {
+        const message = firstValue(
+          content?.error,
+          description && !/^\d{3}$/.test(description) ? description : undefined,
+          'Smart card verification failed — check the number and try again.',
+        );
+        throw new BadRequestException(message);
+      }
+
+      // The adapter normalises the customer's current subscription so the cable
+      // service can match it against the catalog and offer a one-tap Renew.
+      extra.currentPlan = normalizeCablePlan(content);
+    }
     return {
-      name: content?.Customer_Name ?? content?.name ?? 'CUSTOMER',
+      name:
+        firstValue(
+          content?.Customer_Name,
+          content?.customerName,
+          content?.['g-customer-name'],
+          content?.name,
+        ) ?? 'CUSTOMER',
       address: content?.Address,
-      customerRef: content?.customer_id,
-      extra: content,
+      customerRef: content?.customer_id ?? content?.customerId ?? content?.customerRef,
+      extra,
     };
   }
 

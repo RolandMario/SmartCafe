@@ -90,6 +90,23 @@ npx expo start           # then press i / a / w
 - The app ships pointing at the **hosted backend** (`EXPO_PUBLIC_API_URL`). To run against a local backend instead, set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:4000/api` in `mobile/.env` and restart `expo start`.
 - Demo credentials above; fund the wallet via admin, or any wallet-top-up.
 
+#### Android emulator (macOS, Apple Silicon)
+
+The machine has a CLI-installed Android emulator (no Android Studio needed):
+
+```bash
+./scripts/android-emulator.sh   # boots the emulator if needed, then runs `expo start --android`
+```
+
+Details installed once (not needed again):
+
+- JDK 17 (Zulu) at `~/Library/Java/JavaVirtualMachines/zulu17.68.203-…` (tarball install — no sudo needed)
+- Android SDK command-line tools (Homebrew cask `android-commandlinetools`) with SDK root `ANDROID_HOME=/opt/homebrew/share/android-commandlinetools`
+- Android 16 "Baklava" SDK (platform 36), emulator 37.x, platform-tools/adb, and the native **arm64-v8a** system image
+- AVD `expo_test` (`~/.android/avd/expo_test.avd`) — the booted emulator shows up as `emulator-5554` in `adb devices`
+
+Note: to reach a backend running on the Mac from inside the emulator, **do not use `localhost`** — inside the emulator that's the emulator itself. The Android emulator exposes the Mac's loopback at `10.0.2.2`, so set `EXPO_PUBLIC_API_URL=http://10.0.2.2:4000/api` in `mobile/.env` (this only applies to the emulator; a physical phone needs the Mac's LAN IP `http://<your-lan-ip>:4000/api` instead). Restart `expo start` after changing `.env`.
+
 ### 4. Admin (Next.js)
 
 ```bash
