@@ -16,7 +16,7 @@ import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { Roles } from '../common/decorators/roles.decorator';
-import { Role, ServiceType } from '../common/enums';
+import { PaymentWallet, Role, ServiceType } from '../common/enums';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { QueryTransactionsDto } from '../transactions/dto/transactions.dto';
 import { SearchPaginationDto } from '../common/dto/pagination.dto';
@@ -47,6 +47,15 @@ class WalletAdjustDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  @ApiPropertyOptional({
+    enum: PaymentWallet,
+    default: PaymentWallet.MAIN,
+    description: "Account to adjust: 'main' wallet (default) or 'cashback'.",
+  })
+  @IsOptional()
+  @IsEnum(PaymentWallet)
+  wallet?: PaymentWallet;
 }
 
 class UpdateUserDto {
@@ -218,14 +227,32 @@ export class AdminController {
   }
 
   @Post('users/:id/credit')
-  @ApiOperation({ summary: 'Manually credit a user wallet' })
+  @ApiOperation({
+    summary: 'Manually credit a user wallet (main wallet or cashback)',
+  })
   creditWallet(@Param('id') id: string, @Body() dto: WalletAdjustDto) {
+    if (dto.wallet === PaymentWallet.CASHBACK) {
+      return this.walletService.creditCashback(
+        id,
+        dto.amount,
+        dto.note ?? 'Admin cashback credit',
+      );
+    }
     return this.walletService.credit(id, dto.amount, dto.note ?? 'Admin credit');
   }
 
   @Post('users/:id/debit')
-  @ApiOperation({ summary: 'Manually debit a user wallet' })
+  @ApiOperation({
+    summary: 'Manually debit a user wallet (main wallet or cashback)',
+  })
   debitWallet(@Param('id') id: string, @Body() dto: WalletAdjustDto) {
+    if (dto.wallet === PaymentWallet.CASHBACK) {
+      return this.walletService.debitCashback(
+        id,
+        dto.amount,
+        dto.note ?? 'Admin cashback debit',
+      );
+    }
     return this.walletService.debit(id, dto.amount, dto.note ?? 'Admin debit');
   }
 
