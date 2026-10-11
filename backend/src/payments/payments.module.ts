@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { MonnifyService } from './monnify.service';
 import { PaystackService } from './paystack.service';
 import { PaymentGatewayRegistry } from './payment-gateway.registry';
 import {
@@ -17,7 +16,7 @@ import {
       },
     ]),
   ],
-  providers: [MonnifyService, PaystackService, PaymentGatewayRegistry],
-  exports: [MonnifyService, PaystackService, PaymentGatewayRegistry],
+  providers: [PaystackService, PaymentGatewayRegistry],
+  exports: [PaystackService, PaymentGatewayRegistry],
 })
 export class PaymentsModule {}

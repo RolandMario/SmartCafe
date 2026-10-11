@@ -8,6 +8,10 @@ import {
   DedicatedAccount,
   DedicatedAccountSchema,
 } from './schemas/dedicated-account.schema';
+import {
+  CashbackFundingConfig,
+  CashbackFundingConfigSchema,
+} from './schemas/cashback-funding-config.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { WalletModule } from '../wallet/wallet.module';
 import { PaymentsModule } from '../payments/payments.module';
@@ -18,6 +22,10 @@ import { PaymentsModule } from '../payments/payments.module';
       { name: Funding.name, schema: FundingSchema },
       { name: DedicatedAccount.name, schema: DedicatedAccountSchema },
       { name: User.name, schema: UserSchema },
+      {
+        name: CashbackFundingConfig.name,
+        schema: CashbackFundingConfigSchema,
+      },
     ]),
     WalletModule,
     PaymentsModule,

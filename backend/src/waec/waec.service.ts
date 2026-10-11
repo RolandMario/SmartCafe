@@ -3,6 +3,7 @@ import { TransactionsService } from '../transactions/transactions.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { UsersService } from '../users/users.service';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { BuyWaecDto } from './dto/waec.dto';
 
 @Injectable()
@@ -47,8 +48,15 @@ export class WaecService {
       },
       order: { productCode: item.productCode, phone: user?.phone ?? '', quantity, customerData },
       paymentWallet: dto.wallet,
-      // Commission is per PIN, so multiple registration PINs earn it per item.
-      cashback: (item.commission ?? 0) * quantity,
+      // Commission is per PIN (a percentage of the unit price), so multiple
+      // registration PINs earn it per item.
+      cashback: computeCashback({
+        amount: item.amount,
+        commission: item.commission,
+        resellerCommission: item.resellerCommission,
+        role: user?.role,
+        quantity,
+      }),
       pin: dto.pin,
     });
   }

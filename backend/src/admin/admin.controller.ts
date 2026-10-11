@@ -59,12 +59,14 @@ class WalletAdjustDto {
 }
 
 class UpdateUserDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Enable or disable the user account' })
   @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 
-  @ApiPropertyOptional({ enum: Role })
+  @ApiPropertyOptional({ enum: Role, description: 'New user role (user | reseller | admin)' })
   @IsOptional()
+  @IsEnum(Role)
   role?: Role;
 }
 
@@ -170,9 +172,9 @@ export class AdminController {
     @Body() dto: UpdatePaymentGatewayDto,
   ) {
     const provider = String(providerParam).toLowerCase();
-    if (provider !== 'monnify' && provider !== 'paystack') {
+    if (provider !== 'paystack') {
       throw new BadRequestException(
-        `Unknown payment gateway: ${providerParam} (expected monnify or paystack)`,
+        `Unknown payment gateway: ${providerParam} (expected paystack)`,
       );
     }
     return this.paymentGatewayRegistry.setEnabled(

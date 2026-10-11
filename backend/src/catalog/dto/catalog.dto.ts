@@ -123,12 +123,25 @@ export class CreateCatalogItemDto {
   @Min(1)
   validityDays?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Regular user cashback percentage (0–100) of the sale price.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  @Max(100)
   commission?: number;
+
+  @ApiPropertyOptional({
+    description: 'Reseller cashback percentage (0–100) of the sale price.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  resellerCommission?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

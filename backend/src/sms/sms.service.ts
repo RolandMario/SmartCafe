@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { TransactionsService } from '../transactions/transactions.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { UsersService } from '../users/users.service';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { SendBulkSmsDto } from './dto/sms.dto';
 
 /** ebulksms segments messages into 160-char pages; each page costs one unit. */
@@ -12,6 +14,7 @@ export class SmsService {
   constructor(
     private transactionsService: TransactionsService,
     private catalogService: CatalogService,
+    private usersService: UsersService,
   ) {}
 
   /** Return the current per-unit SMS price and how many units a campaign needs. */
@@ -36,6 +39,8 @@ export class SmsService {
     // vendor rate (falls back to the sales unit price → zero profit if unset).
     const providerUnitCost = item?.providerUnitCost ?? unitPrice;
     const providerCost = Math.round(providerUnitCost * units * 100) / 100;
+    // Resellers earn cashback at their own rate — fetch the buyer's role.
+    const user = await this.usersService.findById(userId);
     return this.transactionsService.beginPurchase({
       userId,
       service: ServiceType.SMS,
@@ -55,7 +60,12 @@ export class SmsService {
       },
       order: { senderName: dto.senderName, message: dto.message, recipients: dto.recipients },
       paymentWallet: dto.wallet,
-      cashback: item?.commission ?? 0,
+      cashback: computeCashback({
+        amount,
+        commission: item?.commission,
+        resellerCommission: item?.resellerCommission,
+        role: user?.role,
+      }),
       pin: dto.pin,
     });
   }

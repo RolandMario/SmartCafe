@@ -69,6 +69,7 @@ describe('CableService.verify → current plan + Renew', () => {
       name: 'GOtv Jinja',
       amount: 3900,
       commission: 58,
+      resellerCommission: 0,
     });
   });
 

@@ -90,8 +90,10 @@ export interface CableRenewal {
   name: string;
   /** Sales price in naira (catalog amount, falling back to the vendor's renewal amount). */
   amount: number;
-  /** Cashback / commission config for this plan. */
+  /** Commission / cashback config for this plan — percentages (0–100) of the sale price. */
   commission: number;
+  /** Reseller cashback percentage (0–100) — resellers earn at this higher rate. */
+  resellerCommission?: number;
 }
 
 export interface VerifyParams {

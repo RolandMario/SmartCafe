@@ -4,6 +4,7 @@ import {
   Get,
   Logger,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -11,10 +12,16 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { FundingService } from './funding.service';
 import { DedicatedAccountService } from './dedicated-account.service';
 import { PaymentGatewayRegistry } from '../payments/payment-gateway.registry';
-import { AdminApproveDto, DepositDto, QueryFundingDto } from './dto/funding.dto';
+import {
+  AdminApproveDto,
+  DepositDto,
+  QueryFundingDto,
+  SetCashbackFundingConfigDto,
+} from './dto/funding.dto';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Public } from '../common/decorators/public.decorator';
@@ -30,6 +37,7 @@ export class FundingController {
     private readonly fundingService: FundingService,
     private readonly gatewayRegistry: PaymentGatewayRegistry,
     private readonly dedicatedAccounts: DedicatedAccountService,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('gateways')
@@ -66,14 +74,29 @@ export class FundingController {
     return { dedicatedAccount: DedicatedAccountService.toView(doc) };
   }
 
+  @Get('cashback-info')
+  @ApiOperation({
+    summary:
+      'Company bank account for Cashback Funding. Users transfer wallet top-ups here and the request is credited after admin verification.',
+  })
+  async cashbackInfo() {
+    const { percentage } = await this.fundingService.getCashbackConfig();
+    return {
+      accountName: this.config.get<string>('CASHBACK_ACCOUNT_NAME', 'Digital Smart Environment'),
+      accountNumber: this.config.get<string>('CASHBACK_ACCOUNT_NUMBER', '0128112692'),
+      bankName: this.config.get<string>('CASHBACK_BANK_NAME', 'Wema Bank'),
+      cashbackPercentage: percentage,
+    };
+  }
+
   @Post('deposit')
   @ApiOperation({
     summary:
-      'Create a wallet deposit / funding request. Returns a gateway checkoutUrl (Monnify or Paystack) when configured.',
+      'Create a wallet deposit / funding request. Returns a gateway checkoutUrl (Paystack) when configured, or a pending cashback/manual request for admin verification.',
   })
   deposit(@CurrentUser() user: AuthUser, @Body() dto: DepositDto, @Req() req: Request) {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    return this.fundingService.createDeposit(user.userId, dto.amount, baseUrl, dto.provider);
+    return this.fundingService.createDeposit(user.userId, dto.amount, baseUrl, dto.provider, dto.transferReference);
   }
 
   @Get('payment/:reference')
@@ -83,27 +106,6 @@ export class FundingController {
   })
   verify(@CurrentUser() user: AuthUser, @Param('reference') reference: string) {
     return this.fundingService.verifyPayment(user.userId, reference);
-  }
-
-  @Public()
-  @Post('webhook/monnify')
-  @ApiOperation({ summary: 'Monnify webhook (signed) — auto-credits wallet on success' })
-  async monnifyWebhook(@Req() req: Request, @Res() res: Response) {
-    try {
-      const rawBody: Buffer =
-        (req as Request & { rawBody?: Buffer }).rawBody ??
-        Buffer.from(JSON.stringify(req.body ?? {}));
-      await this.fundingService.handleWebhook('monnify', {
-        payload: (req.body ?? {}) as Record<string, any>,
-        rawBody,
-        signature: (req.headers['monnify-signature'] as string) || undefined,
-        sourceIp: req.ip,
-      });
-      return res.status(200).json({ message: 'Webhook received' });
-    } catch (e) {
-      this.logger.warn(`Monnify webhook rejected: ${e instanceof Error ? e.message : String(e)}`);
-      return res.status(400).json({ message: e instanceof Error ? e.message : 'Invalid webhook' });
-    }
   }
 
   @Public()
@@ -125,30 +127,6 @@ export class FundingController {
       this.logger.warn(`Paystack webhook rejected: ${e instanceof Error ? e.message : String(e)}`);
       return res.status(400).json({ message: e instanceof Error ? e.message : 'Invalid webhook' });
     }
-  }
-
-  @Public()
-  @Get('webhook/monnify/callback')
-  @ApiOperation({ summary: 'Landing page Monnify redirects the customer to after payment' })
-  monnifyCallback(@Query() query: Record<string, any>) {
-    const status = String(query.status ?? '').toUpperCase();
-    const ok = status === 'PAID' || status === 'SUCCESSFUL' || !!query.transactionReference;
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Payment received</title>
-<style>body{font-family:system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f5f7fa;color:#0f172a}main{text-align:center;padding:2rem}h1{font-size:1.5rem}p{color:#475569}</style>
-</head>
-<body>
-<main>
-<h1>${ok ? '✅ Payment received' : '⏳ Payment processed'}</h1>
-<p>Your wallet top-up is being confirmed. You can close this page and return to the app.</p>
-${query.paymentReference ? `<p style="font-size:0.85rem;color:#94a3b8">Reference: ${String(query.paymentReference)}</p>` : ''}
-</main>
-</body>
-</html>`;
   }
 
   @Public()
@@ -186,6 +164,29 @@ ${query.reference ? `<p style="font-size:0.85rem;color:#94a3b8">Reference: ${Str
   @ApiOperation({ summary: 'List all funding requests' })
   adminList(@Query() query: QueryFundingDto) {
     return this.fundingService.adminList(query);
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('admin/cashback-config')
+  @ApiOperation({
+    summary:
+      'Current Cashback Funding bonus percentage credited to the user cashback wallet when a Cashback Funding request is approved',
+  })
+  cashbackConfig() {
+    return this.fundingService.getCashbackConfig();
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('admin/cashback-config')
+  @ApiOperation({
+    summary:
+      'Set the Cashback Funding bonus percentage (0–100) credited to the user cashback wallet on approval',
+  })
+  setCashbackConfig(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SetCashbackFundingConfigDto,
+  ) {
+    return this.fundingService.setCashbackConfig(user.userId, dto.percentage);
   }
 
   @Roles(Role.ADMIN)

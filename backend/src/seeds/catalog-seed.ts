@@ -10,7 +10,10 @@ export interface SeedItem {
   unitPrice?: number;
   validityDays?: number;
   sortOrder?: number;
+  /** Regular user cashback percentage (0–100) of the sale price. */
   commission?: number;
+  /** Reseller cashback percentage (0–100) — resellers earn at this higher rate. */
+  resellerCommission?: number;
   /** Fulfilling vendor for DATA plans — legacy/static rows default to 'static'. */
   vendor?: 'pairgate' | 'vtpass' | 'static';
 }

@@ -5,6 +5,8 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -20,13 +22,23 @@ export class DepositDto {
   amount: number;
 
   @ApiPropertyOptional({
-    enum: ['monnify', 'paystack'],
+    enum: ['paystack', 'cashback'],
     description:
-      'Payment gateway to use. Defaults to the first configured gateway (Monnify, then Paystack). Falls back to the manual admin flow when the choice is unavailable or nothing is configured.',
+      'Payment method to use: "paystack" opens a hosted checkout (default), "cashback" creates a manual bank-transfer request to our company account that an admin verifies before crediting. Falls back to the manual admin flow when a gateway is unavailable.',
   })
   @IsOptional()
-  @IsIn(['monnify', 'paystack'])
+  @IsIn(['paystack', 'cashback'])
   provider?: PaymentProvider;
+
+  @ApiPropertyOptional({
+    example: '220190173001',
+    description:
+      'Reference number shown on the user\'s bank transfer to the company account. Required for provider "cashback" — the admin uses it to match and verify the transfer.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  transferReference?: string;
 }
 
 export class AdminApproveDto {
@@ -41,4 +53,19 @@ export class QueryFundingDto extends PaginationDto {
   @IsOptional()
   @IsEnum(FundingStatus)
   status?: FundingStatus;
+}
+
+export class SetCashbackFundingConfigDto {
+  @ApiProperty({
+    example: 2,
+    minimum: 0,
+    maximum: 100,
+    description:
+      'Cashback funding bonus percentage (0–100) of the funded amount credited to the user cashback wallet when a Cashback Funding request is approved. 0 disables the bonus.',
+  })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  percentage: number;
 }

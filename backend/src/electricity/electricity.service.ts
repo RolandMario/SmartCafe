@@ -4,6 +4,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { VendorService } from '../vendors/vendor.service';
 import { UsersService } from '../users/users.service';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { BuyElectricityDto, VerifyElectricityDto } from './dto/electricity.dto';
 
 @Injectable()
@@ -51,7 +52,12 @@ export class ElectricityService {
         customerData: { meterType: dto.meterType },
       },
       paymentWallet: dto.wallet,
-      cashback: disco?.commission ?? 0,
+      cashback: computeCashback({
+        amount: dto.amount,
+        commission: disco?.commission,
+        resellerCommission: disco?.resellerCommission,
+        role: user?.role,
+      }),
       pin: dto.pin,
     });
   }

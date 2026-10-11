@@ -1,14 +1,14 @@
 /**
  * Shared payment-gateway abstraction.
  *
- * Every payment provider (Monnify, Paystack, …) implements `PaymentGateway`
+ * Every payment provider (Paystack, …) implements `PaymentGateway`
  * so the funding service can route deposits, verification and webhooks by
  * gateway name instead of depending on one concrete adapter. This mirrors
  * the `VendorProvider` pattern used in `src/vendors/`.
  */
 
 /** Payment gateway identifiers. */
-export type PaymentProvider = 'monnify' | 'paystack';
+export type PaymentProvider = 'paystack';
 
 /** Normalised verification outcome used by the rest of the app. */
 export type PaymentOutcome = 'success' | 'pending' | 'failed';

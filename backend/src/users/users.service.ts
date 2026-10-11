@@ -191,11 +191,34 @@ export class UsersService {
   }
 
   async adminUpdate(userId: string, data: { isActive?: boolean; role?: string }) {
-    const user = await this.userModel.findByIdAndUpdate(userId, data, { new: true });
-    if (!user) throw new NotFoundException('User not found');
-    return user;
-  }
+    const current = await this.userModel.findById(userId);
+    if (!current) throw new NotFoundException('User not found');
 
+    if (data.role !== undefined) {
+      const validRoles = Object.values(Role) as string[];
+      if (!validRoles.includes(data.role)) {
+        throw new BadRequestException(
+          `Role must be one of: ${validRoles.join(', ')}`,
+        );
+      }
+    }
+
+    // Admin accounts are protected (like deletion) — they can never be
+    // demoted or deactivated through the dashboard.
+    if (current.role === Role.ADMIN) {
+      if (data.role && data.role !== Role.ADMIN) {
+        throw new BadRequestException('Admin accounts cannot be demoted.');
+      }
+      if (data.isActive === false) {
+        throw new BadRequestException('Admin accounts cannot be disabled.');
+      }
+    }
+
+    current.isActive = data.isActive ?? current.isActive;
+    current.role = (data.role as Role) ?? current.role;
+    await current.save();
+    return current;
+  }
 
   /**
    * Full admin view of a single user: profile, wallet balances and successful

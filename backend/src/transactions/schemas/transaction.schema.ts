@@ -66,6 +66,10 @@ export class Transaction extends Document {
 
   @Prop({ type: Date })
   settledAt?: Date;
+
+  /** Set automatically by `timestamps: true`. */
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);

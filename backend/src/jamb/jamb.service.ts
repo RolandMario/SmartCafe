@@ -4,6 +4,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { VendorService } from '../vendors/vendor.service';
 import { UsersService } from '../users/users.service';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { BuyJambDto, VerifyJambDto } from './dto/jamb.dto';
 
 @Injectable()
@@ -55,7 +56,12 @@ export class JambService {
         customerData: { profileId: dto.profileId },
       },
       paymentWallet: dto.wallet,
-      cashback: item.commission ?? 0,
+      cashback: computeCashback({
+        amount: item.amount,
+        commission: item.commission,
+        resellerCommission: item.resellerCommission,
+        role: user?.role,
+      }),
       pin: dto.pin,
     });
   }

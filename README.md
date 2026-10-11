@@ -196,38 +196,22 @@ vendor account is debited on purchase).
    this platform, so `requery` keeps orders `pending` (never refunds a delivered
    token/bundle).
 
-## Payment gateways: Monnify & Paystack (wallet funding)
+## Payment gateways & Cashback Funding (wallet funding)
 
-Wallet top-ups run through a **hosted checkout** (card, bank transfer, USSD). Two
-gateway adapters ship in `backend/src/payments/` and implement a shared
-`PaymentGateway` interface:
+Wallet top-ups run through a **hosted checkout** (card, bank transfer, USSD)
+from **Paystack**, plus a **Cashback Funding** option (manual bank transfer to
+our company account, verified by an admin). Gateway adapters live in
+`backend/src/payments/` and implement a shared `PaymentGateway` interface:
 
-- **Monnify** — `MONNIFY_*` env vars, host `https://sandbox.monnify.com` (sandbox)
-  or `https://api.monnify.com` (live).
 - **Paystack** — `PAYSTACK_SECRET_KEY` (test = `sk_test_...`, live = `sk_live_...`),
   host `https://api.paystack.co` (test/live is chosen by the key; amounts are
   sent in kobo).
-
-Setup for Monnify:
-
-1. Get your Monnify **test** credentials from the dashboard (`apiKey`,
-   `secretKey`, `contractCode`).
-2. In `backend/.env` set:
-   ```
-   MONNIFY_BASE_URL=https://sandbox.monnify.com   # live: https://api.monnify.com
-   MONNIFY_API_KEY=your_monnify_api_key
-   MONNIFY_SECRET_KEY=your_monnify_secret_key
-   MONNIFY_CONTRACT_CODE=your_monnify_contract_code
-   MONNIFY_WEBHOOK_INSECURE=true                  # sandbox only — no signature header
-   ```
-3. Configure your Monnify webhook URL (dashboard → Developer → Webhook URLs →
-   Transaction Completion) to point at
-   `https://<your-backend>/api/funding/webhook/monnify`. Production uses the
-   `monnify-signature` (HMAC-SHA512) header to validate incoming notifications.
-4. In production set `MONNIFY_WEBHOOK_INSECURE=false` and, if you like, pin
-   `MONNIFY_ALLOWED_IP` to Monnify's production IP (`35.242.133.146`). The
-   HMAC signature is the primary security control; the IP list is optional
-   hardening.
+- **Cashback Funding** — no gateway. Users transfer wallet top-ups to the
+  company account configured with `CASHBACK_ACCOUNT_NAME`,
+  `CASHBACK_ACCOUNT_NUMBER` and `CASHBACK_BANK_NAME` (defaults: `Digital Smart
+  Environment` / `0128112692` / `Wema Bank`). The deposit request stays
+  `pending` until an admin verifies the transfer and credits the wallet
+  manually on the **Admin → Funding** page.
 
 Setup for Paystack:
 
@@ -244,6 +228,12 @@ Setup for Paystack:
    point at `https://<your-backend>/api/funding/webhook/paystack`. Paystack
    always signs requests with the `x-paystack-signature` header (HMAC-SHA512
    of the raw body with your secret key) — even in test mode.
+
+Cashback Funding needs no API credentials: the company account is served to the
+app by `GET /funding/cashback-info` (override the defaults with `CASHBACK_*`
+env vars), which now also returns the active `cashbackPercentage`. A
+`provider: "cashback"` deposit creates a `pending` request that an admin
+approves/declines — see "Manual admin-approval flow" below.
 
 Bank-transfer top-ups use a **dedicated virtual account (DVA)**: `POST
 /api/funding/dva` mints a personal account number per user. The backing bank
@@ -266,14 +256,49 @@ MongoDB transaction. Paystack webhook retries are idempotent (the first
 successful delivery wins), so a transfer shows up in the wallet within seconds
 with no manual step.
 
-Flow: `POST /funding/deposit` returns a `checkoutUrl` → the app opens it in the
-browser → the gateway redirects to the configured redirect URL (or the derived
-callback) → the server verifies the transaction against the gateway API and
-credits the wallet, idempotently. The client may pick a gateway with an
-optional `provider` body field (`monnify` | `paystack`); it is honoured only if
-that gateway is configured. Otherwise the first configured gateway is used
-(Monnify → Paystack). If no gateway is configured, deposits fall back to the
-manual admin-approval flow, which is unchanged.
+Flow: `POST /funding/deposit` returns a `checkoutUrl` for Paystack → the app
+opens it in the browser → the gateway redirects to the configured redirect URL
+(or the derived callback) → the server verifies the transaction against the
+gateway API and credits the wallet, idempotently. The client may pick a method
+with an optional `provider` body field (`paystack` | `cashback`): `paystack`
+is honoured only if that gateway is configured, while `cashback` always creates
+a pending admin-verified request. If no gateway is configured, deposits fall
+back to the manual admin-approval flow, which is unchanged.
+
+### Manual admin-approval flow (Cashback Funding)
+
+A `pending` funding request (provider `manual` or `cashback`) is reviewed on the
+admin **Funding** page: the admin verifies the bank transfer to the company
+account and clicks **Approve & credit** (`POST /funding/admin/:id/approve`) or
+**Reject** (`/funding/admin/:id/reject`), optionally with an admin note. Until
+then the user's Fund Wallet screen and funding history show the request as
+`pending`. The company account the user transfers to comes from
+`GET /funding/cashback-info`.
+
+For `cashback` requests the user is expected to **transfer first**: they must have
+already sent the amount to the company account and must key in the transfer
+reference shown on their bank transfer (`transferReference`, required by
+`POST /funding/deposit` when `provider: "cashback"`). It is stored on the request
+and surfaced in the admin **Funding** table (**Transfer ref** column) so the
+admin can match the incoming transfer when approving. Once the request is
+created, the app shows a **shareable receipt** (registered name, registered phone,
+transfer amount, reference, transfer reference and date/time — shared as a PNG
+snapshot of the receipt or as plain text).
+
+#### Cashback funding bonus
+
+Admins can set a cashback-funding bonus percentage (0–100) from the admin
+**Funding** page (**Cashback funding bonus** box). When an admin then approves a
+`cashback` funding request, that percentage of the funded amount is additionally
+credited to the user's **cashback wallet** (spendable on future purchases, never
+withdrawable) and recorded on the request as `cashbackAmount` for audit.
+
+The value is stored in a singleton `CashbackFundingConfig` document and applied
+live (no redeploy/restart). `GET /funding/admin/cashback-config` reads it,
+`PATCH /funding/admin/cashback-config` writes it (body `{ "percentage": 2 }`;
+clamped to 0–100), and `GET /funding/cashback-info` exposes it to the mobile app
+as `cashbackPercentage`. The default `0` disables the bonus, so existing
+deployments that never configure it behave exactly as before.
 
 ### Admin control: enabling / disabling gateways
 
@@ -299,9 +324,9 @@ were already started remain unaffected by toggles, so no in-flight payment is
 ever lost.
 
 Related endpoints: `GET /funding/payment/:reference` (verify + credit),
-`POST /funding/webhook/monnify` + `POST /funding/webhook/paystack` (signed
-webhooks), `GET /funding/webhook/monnify/callback` +
-`GET /funding/webhook/paystack/callback` (redirect landing pages).
+`POST /funding/webhook/paystack` (signed webhook),
+`GET /funding/webhook/paystack/callback` (redirect landing page),
+`GET /funding/cashback-info` (company bank account for Cashback Funding).
 
 ## Project layout
 

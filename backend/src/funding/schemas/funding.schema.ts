@@ -22,24 +22,24 @@ export class Funding extends Document {
   @Prop({ type: String, default: 'Manual bank deposit' })
   method: string;
 
-  /** Payment gateway used: 'monnify' | 'paystack' | 'manual'. */
+  /** Payment gateway used: 'paystack' | 'cashback' | 'manual'. */
   @Prop({
     type: String,
-    enum: ['monnify', 'paystack', 'manual'],
+    enum: ['paystack', 'cashback', 'manual'],
     default: 'manual',
     index: true,
   })
   provider: string;
 
-  /** Reference sent to the payment gateway (equals `reference` when Monnify). */
+  /** Reference sent to the payment gateway (equals `reference` when Paystack). */
   @Prop({ type: String, sparse: true, index: true })
   paymentReference?: string;
 
-  /** Monnify transaction reference returned at checkout initialisation. */
+  /** Gateway transaction reference returned at checkout initialisation. */
   @Prop({ type: String })
   transactionReference?: string;
 
-  /** Monnify hosted checkout URL (steps in, awaits payment). */
+  /** Paystack hosted checkout URL (steps in, awaits payment). */
   @Prop({ type: String })
   checkoutUrl?: string;
 
@@ -47,14 +47,36 @@ export class Funding extends Document {
   @Prop({ type: Object })
   providerMeta?: Record<string, any>;
 
+  /**
+   * Transfer reference the user keyed in when creating a `cashback` (bank
+   * transfer to the company account) funding request. Lets the admin match the
+   * incoming transfer to the request when verifying. Absent for Paystack /
+   * manual DVA deposits.
+   */
+  @Prop({ type: String, trim: true })
+  transferReference?: string;
+
   @Prop()
   adminNote?: string;
+
+  /**
+   * Cashback wallet bonus (₦) credited alongside the wallet top-up when a
+   * `cashback` provider funding request is approved. Set at credit time from
+   * the admin-configured Cashback Funding percentage; absent when the bonus
+   * was disabled (0%).
+   */
+  @Prop({ type: Number })
+  cashbackAmount?: number;
 
   @Prop({ type: Types.ObjectId, ref: 'User' })
   processedBy?: Types.ObjectId;
 
   @Prop({ type: Date })
   processedAt?: Date;
+
+  /** Set automatically by `timestamps: true`. */
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export const FundingSchema = SchemaFactory.createForClass(Funding);

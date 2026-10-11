@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { TransactionsService } from '../transactions/transactions.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { UsersService } from '../users/users.service';
 import { CatalogItem } from '../catalog/schemas/catalog-item.schema';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { BuyDataDto } from './dto/data.dto';
 
 @Injectable()
@@ -10,6 +12,7 @@ export class DataService {
   constructor(
     private transactionsService: TransactionsService,
     private catalogService: CatalogService,
+    private usersService: UsersService,
   ) {}
 
   async purchase(userId: string, dto: BuyDataDto) {
@@ -27,6 +30,8 @@ export class DataService {
     if (item.service !== ServiceType.DATA || item.amount == null) {
       throw new BadRequestException('Selected plan is not a valid data bundle');
     }
+    // Resellers earn cashback at their own rate — fetch the buyer's role.
+    const user = await this.usersService.findById(userId);
     return this.transactionsService.beginPurchase({
       userId,
       service: ServiceType.DATA,
@@ -49,7 +54,12 @@ export class DataService {
         phone: dto.phone,
       },
       paymentWallet: dto.wallet,
-      cashback: item.commission ?? 0,
+      cashback: computeCashback({
+        amount: item.amount,
+        commission: item.commission,
+        resellerCommission: item.resellerCommission,
+        role: user?.role,
+      }),
       pin: dto.pin,
     });
   }

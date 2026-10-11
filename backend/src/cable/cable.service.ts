@@ -4,6 +4,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { VendorService } from '../vendors/vendor.service';
 import { UsersService } from '../users/users.service';
 import { ServiceType } from '../common/enums';
+import { computeCashback } from '../common/utils/commission';
 import { BuyCableDto, VerifyCableDto } from './dto/cable.dto';
 import {
   CableCurrentPlan,
@@ -56,6 +57,7 @@ export class CableService {
           name: pkg.name,
           amount: pkg.amount ?? currentPlan.amount ?? 0,
           commission: pkg.commission ?? 0,
+          resellerCommission: pkg.resellerCommission ?? 0,
         };
       }
     }
@@ -93,6 +95,7 @@ export class CableService {
             name: pkg.name,
             amount: amount ?? 0,
             commission: pkg.commission ?? 0,
+            resellerCommission: pkg.resellerCommission ?? 0,
           };
         }
       }
@@ -190,7 +193,12 @@ export class CableService {
         phone: user?.phone ?? '',
       },
       paymentWallet: dto.wallet,
-      cashback: pkg.commission ?? 0,
+      cashback: computeCashback({
+        amount: pkg.amount,
+        commission: pkg.commission,
+        resellerCommission: pkg.resellerCommission,
+        role: user?.role,
+      }),
       pin: dto.pin,
     });
   }

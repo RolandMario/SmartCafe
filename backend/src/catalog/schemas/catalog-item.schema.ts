@@ -55,8 +55,17 @@ export class CatalogItem extends Document {
   @Prop({ type: Number })
   validityDays?: number;
 
+  /**
+   * Regular user cashback percentage (0–100) on the sale price, credited as
+   * cashback when a purchase succeeds. Semantics changed from a flat naira
+   * amount to a percentage — seeded values of 0 are unaffected.
+   */
   @Prop({ type: Number, default: 0 })
   commission?: number;
+
+  /** Reseller cashback percentage (0–100) — resellers earn at this higher rate. */
+  @Prop({ type: Number, default: 0 })
+  resellerCommission?: number;
 
   @Prop({ default: true })
   active: boolean;

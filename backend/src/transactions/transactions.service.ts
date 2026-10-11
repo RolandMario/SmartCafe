@@ -8,6 +8,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types, ClientSession } from 'mongoose';
 import { Transaction } from './schemas/transaction.schema';
+import { Funding } from '../funding/schemas/funding.schema';
 import { WalletService } from '../wallet/wallet.service';
 import { VendorService } from '../vendors/vendor.service';
 import { UsersService } from '../users/users.service';
@@ -48,6 +49,7 @@ export class TransactionsService {
 
   constructor(
     @InjectModel(Transaction.name) private transactionModel: Model<Transaction>,
+    @InjectModel(Funding.name) private fundingModel: Model<Funding>,
     private walletService: WalletService,
     private vendorService: VendorService,
     private usersService: UsersService,
@@ -55,18 +57,62 @@ export class TransactionsService {
   ) {}
 
   async myTransactions(userId: string, query: QueryTransactionsDto) {
-    const filter: Record<string, any> = { user: new Types.ObjectId(userId) };
+    const objectUserId = new Types.ObjectId(userId);
+    const filter: Record<string, any> = { user: objectUserId };
     if (query.service) filter.service = query.service;
     if (query.status) filter.status = query.status;
-    const [items, total] = await Promise.all([
+
+    // Wallet top-ups (funding records) have no `service`, so they belong in the
+    // unfiltered "All" history feed only — a service filter is for purchases.
+    const showFunding = !query.service;
+    // Fetching the top (page × limit) of each list is enough to correctly slice
+    // any page of the merged, chronologically-ordered union (an item that is
+    // outside the top-k of its own list cannot be inside the global top-k).
+    const take = query.page * query.limit;
+
+    const [txnItems, txnTotal, fundingItems, fundingTotal] = await Promise.all([
       this.transactionModel
         .find(filter)
         .sort({ createdAt: -1 })
-        .skip((query.page - 1) * query.limit)
-        .limit(query.limit),
+        .limit(take),
       this.transactionModel.countDocuments(filter),
+      showFunding
+        ? this.fundingModel
+            .find({ user: objectUserId })
+            .sort({ createdAt: -1 })
+            .limit(take)
+        : Promise.resolve([]),
+      showFunding
+        ? this.fundingModel.countDocuments({ user: objectUserId })
+        : Promise.resolve(0),
     ]);
-    return { items, total, page: query.page, limit: query.limit };
+
+    // Both lists are newest-first, so a linear merge keeps purchases and funding
+    // in one fully chronological feed.
+    const merged: Array<Transaction | Funding> = [];
+    let i = 0;
+    let j = 0;
+    while (i < txnItems.length || j < fundingItems.length) {
+      const txn = i < txnItems.length ? txnItems[i] : undefined;
+      const fund = j < fundingItems.length ? fundingItems[j] : undefined;
+      if (fund && (!txn || timeOf(fund.createdAt) > timeOf(txn.createdAt))) {
+        merged.push(fund);
+        j += 1;
+      } else if (txn) {
+        merged.push(txn);
+        i += 1;
+      } else {
+        break;
+      }
+    }
+
+    const start = (query.page - 1) * query.limit;
+    return {
+      items: merged.slice(start, start + query.limit),
+      total: txnTotal + fundingTotal,
+      page: query.page,
+      limit: query.limit,
+    };
   }
 
   /**
@@ -419,4 +465,10 @@ function isTransactionUnsupportedError(err: unknown): boolean {
   return /transaction numbers are only allowed|transactions are not supported/i.test(
     err.message,
   );
+}
+
+/** Millisecond timestamp for a record's `createdAt`, used by the History merge. */
+function timeOf(date?: Date | string): number {
+  const ms = date ? new Date(date).getTime() : 0;
+  return Number.isFinite(ms) ? ms : 0;
 }

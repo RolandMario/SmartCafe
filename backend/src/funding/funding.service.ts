@@ -8,6 +8,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { Funding } from './schemas/funding.schema';
+import { CashbackFundingConfig } from './schemas/cashback-funding-config.schema';
 import { WalletService } from '../wallet/wallet.service';
 import { FundingStatus } from '../common/enums';
 import { generateReference } from '../common/utils/reference';
@@ -29,6 +30,8 @@ export class FundingService {
   constructor(
     @InjectModel(Funding.name) private fundingModel: Model<Funding>,
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(CashbackFundingConfig.name)
+    private cashbackConfigModel: Model<CashbackFundingConfig>,
     @InjectConnection() private connection: Connection,
     private walletService: WalletService,
     private gateways: PaymentGatewayRegistry,
@@ -50,7 +53,17 @@ export class FundingService {
     amount: number,
     requestBaseUrl?: string,
     requestedProvider?: PaymentProvider | string,
+    transferReference?: string,
   ) {
+    // Cashback Funding is a bank transfer to our company account: the user must
+    // have already sent the money and must key in the bank's transfer reference
+    // so the admin can match it when verifying. Reject before creating anything.
+    if (requestedProvider === 'cashback' && !(transferReference ?? '').trim()) {
+      throw new BadRequestException(
+        'Enter the transfer reference number from your bank transfer to the company account',
+      );
+    }
+
     const user = await this.userModel.findById(userId);
     const reference = generateReference('FND');
 
@@ -64,6 +77,22 @@ export class FundingService {
     });
 
     const gateway = this.gateways.resolve(requestedProvider);
+    if (requestedProvider === 'cashback') {
+      // Cashback Funding — direct bank transfer to our company account. There
+      // is no gateway checkout: the request stays PENDING until an admin
+      // verifies the transfer and credits (or declines) it manually.
+      funding.provider = 'cashback';
+      funding.method = 'Cashback Funding (Bank transfer)';
+      funding.transferReference = (transferReference ?? '').trim();
+      await funding.save();
+      return {
+        funding,
+        provider: 'cashback' as const,
+        checkoutUrl: null,
+        paymentReference: reference,
+      };
+    }
+
     if (gateway) {
       let init: Awaited<ReturnType<PaymentGateway['initializeTransaction']>>;
       try {
@@ -144,7 +173,7 @@ export class FundingService {
       throw new NotFoundException('Funding request not found');
     }
     if (funding.status !== FundingStatus.PENDING) return funding;
-    if (funding.provider === 'manual') return funding;
+    if (funding.provider === 'manual' || funding.provider === 'cashback') return funding;
 
     const gateway = this.gateways.get(funding.provider);
     if (!gateway?.isConfigured()) return funding;
@@ -322,22 +351,77 @@ export class FundingService {
     if (funding) this.logger.log(`Marked funding ${paymentReference} as failed (${reason})`);
   }
 
+  /**
+   * Current Cashback Funding bonus percentage (0–100). Missing config rows
+   * mean the bonus is disabled (0) — deployments that never set it behave
+   * exactly like before.
+   */
+  async getCashbackConfig(): Promise<{ percentage: number }> {
+    const doc = await this.cashbackConfigModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .lean();
+    return { percentage: doc?.percentage ?? 0 };
+  }
+
+  /**
+   * Persist the Cashback Funding bonus percentage. Clamped to 0–100 and
+   * rounded to 2 decimals; applied immediately to subsequent approvals.
+   */
+  async setCashbackConfig(
+    adminId: string,
+    percentage: number,
+  ): Promise<CashbackFundingConfig> {
+    const pct = Math.max(0, Math.min(100, Math.round(percentage * 100) / 100));
+    return this.cashbackConfigModel.findOneAndUpdate(
+      {},
+      {
+        $set: {
+          percentage: pct,
+          updatedBy: new Types.ObjectId(adminId),
+        },
+      },
+      { upsert: true, new: true },
+    );
+  }
+
   async approve(id: string, adminId: string, note?: string) {
     const funding = await this.fundingModel.findById(id);
     if (!funding) throw new NotFoundException('Funding request not found');
     if (funding.status !== FundingStatus.PENDING) {
       throw new BadRequestException('This request has already been processed');
     }
+
+    // Cashback Funding bonus: an admin-configured percentage of the funded
+    // amount is additionally credited to the user's cashback wallet (never
+    // withdrawable — spendable on future purchases). Recorded on the request
+    // before the credits below so a mid-credit failure can still be reconciled
+    // from the admin list.
+    if (funding.provider === 'cashback') {
+      const { percentage } = await this.getCashbackConfig();
+      if (Number.isFinite(percentage) && percentage > 0) {
+        funding.cashbackAmount = Math.round(funding.amount * percentage) / 100;
+      }
+    }
+
     funding.status = FundingStatus.CREDITED;
     funding.processedBy = new Types.ObjectId(adminId);
     funding.processedAt = new Date();
     funding.adminNote = note;
     await funding.save();
+
     await this.walletService.credit(
       funding.user.toString(),
       funding.amount,
       `Wallet funding (${funding.reference})`,
     );
+    if (funding.cashbackAmount && funding.cashbackAmount > 0) {
+      await this.walletService.creditCashback(
+        funding.user.toString(),
+        funding.cashbackAmount,
+        `Cashback funding bonus (${funding.reference})`,
+      );
+    }
     return funding;
   }
 

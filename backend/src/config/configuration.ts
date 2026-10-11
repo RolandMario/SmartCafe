@@ -119,34 +119,21 @@ class EnvironmentVariables {
   @IsString()
   PEYFLEX_API_KEY: string = '';
 
-  // --- Monnify payment gateway (wallet funding) ---
+  // --- Cashback Funding (manual bank transfer, admin-verified) ---
+  // Company bank account users are told to transfer wallet top-ups to. The
+  // mobile app shows these on the Fund Wallet screen with copy-to-clipboard;
+  // deposits are credited after an admin verifies the transfer.
   @IsOptional()
   @IsString()
-  MONNIFY_BASE_URL: string = 'https://sandbox.monnify.com';
+  CASHBACK_ACCOUNT_NAME: string = 'Digital Smart Environment';
 
   @IsOptional()
   @IsString()
-  MONNIFY_API_KEY: string = '';
+  CASHBACK_ACCOUNT_NUMBER: string = '0128112692';
 
   @IsOptional()
   @IsString()
-  MONNIFY_SECRET_KEY: string = '';
-
-  @IsOptional()
-  @IsString()
-  MONNIFY_CONTRACT_CODE: string = '';
-
-  @IsOptional()
-  @IsString()
-  MONNIFY_REDIRECT_URL: string = '';
-
-  @IsOptional()
-  @IsString()
-  MONNIFY_ALLOWED_IP: string = '';
-
-  @IsOptional()
-  @IsBoolean()
-  MONNIFY_WEBHOOK_INSECURE: boolean = false;
+  CASHBACK_BANK_NAME: string = 'Wema Bank';
 
   // --- Paystack payment gateway (wallet funding) ---
   @IsOptional()

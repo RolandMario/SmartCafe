@@ -1,5 +1,6 @@
 export enum Role {
   USER = 'user',
+  RESELLER = 'reseller',
   ADMIN = 'admin',
 }
 

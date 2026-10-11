@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { MonnifyService } from './monnify.service';
 import { PaystackService } from './paystack.service';
 import {
   PaymentGateway,
@@ -21,8 +20,8 @@ import {
  *
  * `resolve()` picks the active gateway for a new deposit: an explicit client
  * choice if it is active, otherwise the first active gateway in registration
- * order (monnify → paystack), otherwise null — in which case the funding
- * service falls back to the manual admin-approval flow.
+ * order (paystack), otherwise null — in which case the funding service falls
+ * back to the manual admin-approval flow (or cashback funding).
  *
  * `get()` deliberately returns the adapter regardless of the admin toggle:
  * verification and webhook settlement for a checkout already started must keep
@@ -37,12 +36,10 @@ export class PaymentGatewayRegistry implements OnModuleInit {
   private readonly enabledByAdmin = new Map<PaymentProvider, boolean>();
 
   constructor(
-    monnify: MonnifyService,
     paystack: PaystackService,
     @InjectModel(PaymentGatewayConfig.name)
     private configModel: Model<PaymentGatewayConfig>,
   ) {
-    this.register(monnify);
     this.register(paystack);
   }
 
