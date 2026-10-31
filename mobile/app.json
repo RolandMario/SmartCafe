@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "SmartCafe",
+    "slug": "mobile",
+    "version": "2.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/smartcafe.png",
+    "scheme": "mobile",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0C4A2B",
+    "ios": {
+      "icon": "./assets/images/smartcafe.png",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.smartcafe.mobile",
+      "infoPlist": {
+        "NSContactsUsageDescription": "Allow SmartCafe to read your contacts so you can pick a recipient phone number.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleShortVersionString": "2.1.0"
+      }
+    },
+    "android": {
+      "softwareKeyboardLayoutMode": "resize",
+      "backgroundColor": "#0C4A2B",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/SC.png",
+        "backgroundImage": "",
+        "monochromeImage": ""
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "package": "com.smartcafe.mobile"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0C4A2B",
+          "image": "./assets/images/smartcafe.png",
+          "imageWidth": 76
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow SmartCafe to read your contacts so you can pick a recipient phone number."
+        }
+      ],
+      "expo-sharing",
+      ["expo-build-properties",
+      {
+        "android": {
+          "enableProguardInReleaseBuilds": true,
+          "proguardRules": "./proguard-rules.pro",
+          "enableMinifyInReleaseBuilds": true
+        }
+      }
+    ]
+    ],
+    "experiments": {
+      "typedRoutes": false,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3d7e5dad-858f-4850-a2f6-e4cad17771c3"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/3d7e5dad-858f-4850-a2f6-e4cad17771c3"
+    }
+  }
+}
