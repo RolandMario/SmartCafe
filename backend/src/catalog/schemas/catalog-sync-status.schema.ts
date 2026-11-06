@@ -2,10 +2,10 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 /**
- * Latest status of a DATA catalog re-seed, persisted in Mongo so it survives
+ * Latest status of a catalog re-seed, persisted in Mongo so it survives
  * process restarts / cold starts (the hosted backend runs on ephemeral
  * serverless instances) and is identical on every instance. One doc per service
- * ('DATA').
+ * ('DATA' for the data-plan sync, 'CABLE' for the cable-bouquet sync).
  */
 @Schema({
   timestamps: true,
@@ -20,7 +20,7 @@ import { Document } from 'mongoose';
   },
 })
 export class CatalogSyncStatus extends Document {
-  @Prop({ type: String, required: true, unique: true, enum: ['DATA'] })
+  @Prop({ type: String, required: true, unique: true, enum: ['DATA', 'CABLE'] })
   service: string;
 
   @Prop({

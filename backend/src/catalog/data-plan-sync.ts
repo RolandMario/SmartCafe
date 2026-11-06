@@ -65,7 +65,10 @@ export function cleanDataPlanName(raw: string): string {
   name = name
     .replace(/(?<![A-Za-z])N\s*,?\s*[\d.,]+\b/gi, ' ')
     .replace(/\b[\d.,]+\s*Naira\b/gi, ' ')
-    .replace(/₦\s*[\d.,]+/g, ' ');
+    .replace(/₦\s*[\d.,]+/g, ' ')
+    // Some variations drop the "N" but keep the thousands separators
+    // ("DStv Premium Streaming Subscription - 44,500") — strip that trailing token.
+    .replace(/\s-\s*\d{1,3}(?:,\d{3})+\s*$/g, '');
   // Price tokens usually sit next to a dash; tidy up the leftover dash/space runs.
   name = name
     .replace(/\s*-\s*-\s*/g, ' - ')

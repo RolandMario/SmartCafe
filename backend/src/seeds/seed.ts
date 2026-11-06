@@ -71,6 +71,10 @@ const catalogSchema = new mongoose.Schema(
     validityDays: Number,
     commission: { type: Number, default: 0 },
     resellerCommission: { type: Number, default: 0 },
+    // Vendor that fulfils the product ('pairgate' | 'vtpass' | 'peyflex' | 'static').
+    // Declared here so the seed's stale-pruning can be scoped to the rows this
+    // script owns and never delete another vendor's plans.
+    vendor: { type: String, default: 'static' },
     active: { type: Boolean, default: true },
     sortOrder: { type: Number, default: 0 },
   },
@@ -126,6 +130,9 @@ async function seedCatalog() {
   const stale = await CatalogItem.deleteMany({
     service: 'DATA',
     provider: { $in: ['MTN', 'GLO', 'AIRTEL', '9MOBILE'] },
+    // Only prune rows this script owns: Pairgate/Peyflex plans are synced by
+    // the backend from their own APIs and must survive a seed run.
+    vendor: { $nin: ['pairgate', 'peyflex'] },
     productCode: { $nin: [...dataCodes] },
   });
   if (stale.deletedCount) {
@@ -250,6 +257,7 @@ async function syncDataPlans(): Promise<Map<string, Set<string>> | null> {
             provider: svc.provider,
             providerLabel: svc.providerLabel,
             productCode,
+            vendor: 'vtpass',
             name: plan.name,
             amount: plan.amount,
             validityDays: dataValidityDays(plan.name, productCode) ?? 30,
@@ -264,6 +272,8 @@ async function syncDataPlans(): Promise<Map<string, Set<string>> | null> {
     const removed = await CatalogItem.deleteMany({
       service: 'DATA',
       provider: svc.provider,
+      // Same scope as the catalog re-sync: only VTPass/static/legacy rows.
+      vendor: { $nin: ['pairgate', 'peyflex'] },
       productCode: { $nin: [...codes] },
     });
     console.log(
@@ -347,6 +357,7 @@ async function syncCablePlans() {
             provider: svc.provider,
             providerLabel: svc.providerLabel,
             productCode,
+            vendor: 'vtpass',
             name: plan.name,
             amount: plan.amount,
             sortOrder: plan.index + 1,
@@ -360,6 +371,9 @@ async function syncCablePlans() {
     const removed = await CatalogItem.deleteMany({
       service: 'CABLE',
       provider: svc.provider,
+      // Cable bouquets are vended through VTPass only — never prune a row
+      // another vendor owns.
+      vendor: { $nin: ['pairgate', 'peyflex'] },
       productCode: { $nin: [...codes] },
     });
     console.log(

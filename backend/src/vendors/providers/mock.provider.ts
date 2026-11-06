@@ -21,27 +21,28 @@ import { normalizeCablePlan } from './cable-verify.helper';
 export class MockProvider implements VendorProvider, OnModuleInit {
   readonly name = 'mock';
 
-  /** Simulated current-plan catalogue — codes/amounts mirror the CABLE seed
-   *  (dstv-padi … dstv7, gotv-smallie … gotv-supa, StarTimes dish/antenna) so a
-   *  verified customer's plan always maps to a real catalog row via the cable
-   *  service and the Renew button has a package to purchase. */
+  /** Simulated current-plan catalogue — codes/amounts mirror the live CABLE seed
+   *  (DStv Premium/Compact-style E36 bouquets, GOtv Easy → Sports, StarTimes
+   *  dish/antenna) so a verified customer's plan always maps to a real catalog
+   *  row via the cable service and the Renew button has a package to purchase. */
   private static readonly CABLE_PLAN_CATALOG: Record<
     string,
     { code: string; name: string; amount: number }[]
   > = {
     DSTV: [
-      { code: 'dstv-padi', name: 'DStv Padi', amount: 4400 },
-      { code: 'dstv-yanga', name: 'DStv Yanga', amount: 6000 },
-      { code: 'dstv-confam', name: 'DStv Confam', amount: 11000 },
-      { code: 'dstv79', name: 'DStv Compact', amount: 19000 },
-      { code: 'dstv7', name: 'DStv Compact Plus', amount: 30000 },
+      { code: 'dstv-greatwall', name: 'DStv Great Wall', amount: 3800 },
+      { code: 'dstv-starter36', name: 'DStv Starter E36', amount: 6000 },
+      { code: 'dstv-select36', name: 'DStv Select E36', amount: 11000 },
+      { code: 'dstv-sports36', name: 'DStv Sports E36', amount: 21000 },
+      { code: 'dstv3', name: 'DStv Premium', amount: 44500 },
     ],
     GOTV: [
-      { code: 'gotv-smallie', name: 'GOtv Smallie', amount: 1900 },
-      { code: 'gotv-jinja', name: 'GOtv Jinja', amount: 3900 },
-      { code: 'gotv-jolli', name: 'GOtv Jolli', amount: 5800 },
-      { code: 'gotv-max', name: 'GOtv Max', amount: 8500 },
-      { code: 'gotv-supa', name: 'GOtv Supa', amount: 11400 },
+      { code: 'gotv-easy', name: 'GOtv Easy', amount: 4000 },
+      { code: 'gotv-starter', name: 'GOtv Starter', amount: 6000 },
+      { code: 'gotv-select', name: 'GOtv Select', amount: 11000 },
+      // Deliberately the vendor's own casing so the name-matching fallback in
+      // CableService.matchCatalogPlan is exercised ("Gotv Sports" → "GOtv Sports").
+      { code: 'gotv-sports', name: 'Gotv Sports', amount: 21000 },
     ],
     STARTIMES: [
       { code: 'nova', name: 'StarTimes Nova (Dish)', amount: 2100 },

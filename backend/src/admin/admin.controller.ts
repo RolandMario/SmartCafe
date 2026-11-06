@@ -151,6 +151,15 @@ export class AdminController {
     return this.vendorService.refreshDataSync();
   }
 
+  @Post('vendors/refresh-cable')
+  @ApiOperation({
+    summary:
+      'Re-sync the CABLE bouquet catalog from VTPass live variations (DStv / GOtv / StarTimes) — inserts new bouquets, updates prices, prunes retired ones',
+  })
+  refreshVendorCable() {
+    return this.vendorService.refreshCableSync();
+  }
+
   // ---------------- Payment gateways (wallet funding) ----------------
   @Get('payment-gateways')
   @ApiOperation({

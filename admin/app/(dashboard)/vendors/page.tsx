@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import type {
+  CableCatalogInfo,
+  CableSyncStatus,
   DataCatalogInfo,
   DataSyncStatus,
   ServiceType,
@@ -40,6 +42,13 @@ const CATALOG_BADGE: Record<DataCatalogInfo["source"], { label: string; cls: str
   empty: { label: "No DATA plans", cls: "bg-red-100 text-red-700" },
 };
 
+const CABLE_BADGE: Record<CableCatalogInfo["source"], { label: string; cls: string }> = {
+  vtpass: { label: "VTPass bouquets", cls: "bg-blue-100 text-blue-700" },
+  static: { label: "Bundled bouquets", cls: "bg-slate-200 text-slate-700" },
+  mixed: { label: "Mixed bouquets", cls: "bg-amber-100 text-amber-700" },
+  empty: { label: "No CABLE bouquets", cls: "bg-red-100 text-red-700" },
+};
+
 function syncStatusText(s: DataSyncStatus | undefined): string {
   if (!s || s.state === "idle") return "No catalog sync has run in this session.";
   const src = PROVIDER_LABEL[s.source ?? ""] ?? s.source ?? "the provider";
@@ -51,6 +60,14 @@ function syncStatusText(s: DataSyncStatus | undefined): string {
   }
   const at = s.finishedAt ? new Date(s.finishedAt).toLocaleTimeString() : "";
   return `Last synced ${s.synced ?? 0} plans · pruned ${s.removed ?? 0} from ${src}${at ? ` at ${at}` : ""}.`;
+}
+
+function cableSyncStatusText(s: CableSyncStatus | undefined): string {
+  if (!s || s.state === "idle") return "No bouquet re-sync has run yet — run one whenever VTPass repackages.";
+  if (s.state === "syncing") return "Re-syncing bouquets from VTPass… usually a few seconds.";
+  if (s.state === "error") return `Last bouquet re-sync failed: ${s.message ?? "unknown error"}`;
+  const at = s.finishedAt ? new Date(s.finishedAt).toLocaleString() : "";
+  return `Last synced ${s.synced ?? 0} bouquets · pruned ${s.removed ?? 0} from VTPass${at ? ` at ${at}` : ""}.`;
 }
 
 export default function VendorsPage() {
@@ -131,6 +148,33 @@ export default function VendorsPage() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Resync failed");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const resyncCable = async () => {
+    setSaving("CABLE_SYNC");
+    setError("");
+    setMessage("");
+    try {
+      const res = await apiFetch<{ cableSync: CableSyncStatus; cableCatalog: CableCatalogInfo }>(
+        "/admin/vendors/refresh-cable",
+        { method: "POST" },
+      );
+      await load();
+      const s = res.cableSync;
+      if (s.state === "done") {
+        setMessage(
+          `CABLE bouquets re-synced — ${s.synced ?? 0} bouquets synced${s.removed ? `, ${s.removed} retired pruned` : ""} from VTPass.`,
+        );
+      } else if (s.state === "error") {
+        setError(`CABLE re-sync failed: ${s.message ?? "unknown error"}`);
+      } else {
+        setMessage("CABLE bouquet sync is still running — the status below updates as it completes.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "CABLE re-sync failed");
     } finally {
       setSaving(null);
     }
@@ -268,6 +312,49 @@ export default function VendorsPage() {
             </button>
           </div>
           <p className="mt-3 text-xs text-slate-600">{syncStatusText(overview?.dataSync)}</p>
+        </div>
+      </div>
+
+      <div className="rounded-xl bg-white border border-slate-200 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h2 className="text-sm font-semibold text-slate-900">CABLE bouquets</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            DStv, GOtv and StarTimes bouquets come straight from VTPass's live variation list. Re-sync after VTPass
+            repackages: new bouquets are added, prices updated in place, and retired bouquets pruned (they would fail
+            with &quot;product does not exist&quot;). Existing bouquets keep their commission and Active setting.
+          </p>
+        </div>
+        <div className="px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              {(() => {
+                const info = overview?.cableCatalog;
+                const badge = CABLE_BADGE[info?.source ?? "empty"];
+                return (
+                  <>
+                    <p className="text-sm text-slate-700">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${badge.cls}`}>
+                        {badge.label}
+                      </span>{" "}
+                      <span className="font-semibold">{info?.total ?? 0} bouquets</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {info?.dstv ?? 0} DStv · {info?.gotv ?? 0} GOtv · {info?.startimes ?? 0} StarTimes
+                      {info?.other ? ` · ${info.other} other` : ""}
+                    </p>
+                  </>
+                );
+              })()}
+            </div>
+            <button
+              onClick={() => void resyncCable()}
+              disabled={saving !== null}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving === "CABLE_SYNC" ? "Syncing…" : "Re-sync CABLE bouquets"}
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-slate-600">{cableSyncStatusText(overview?.cableSync)}</p>
         </div>
       </div>
 

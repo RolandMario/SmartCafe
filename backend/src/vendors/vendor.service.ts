@@ -23,8 +23,9 @@ import { VtpassProvider } from './providers/vtpass.provider';
 import { EbulksmsProvider } from './providers/ebulksms.provider';
 import { PairgateProvider } from './providers/pairgate.provider';
 import { PeyflexProvider } from './providers/peyflex.provider';
-import { CatalogSyncService, DataSyncStatusShape } from '../catalog/catalog-sync.service';
+import { CatalogSyncService, CableCatalogInfo, CatalogSyncStatusShape, DataSyncStatusShape } from '../catalog/catalog-sync.service';
 import { DataPlanRow } from '../catalog/data-plan-sync';
+import { CablePlanRow } from '../catalog/cable-plan-sync';
 
 export const KNOWN_VENDOR_PROVIDERS = ['mock', 'vtpass', 'ebulksms', 'pairgate', 'peyflex'] as const;
 export type KnownVendorProvider = (typeof KNOWN_VENDOR_PROVIDERS)[number];
@@ -81,6 +82,12 @@ export class VendorService implements OnModuleInit {
 
   /** A re-seed requested while another was running (applied afterwards). */
   private pendingDataSync: { mode: 'background' | 'wait' } | null = null;
+
+  /** Status of the current/last CABLE bouquet re-sync (surfaced in the admin UI). */
+  private cableSyncStatus: CatalogSyncStatusShape = { state: 'idle' };
+
+  /** Guards against overlapping CABLE bouquet re-syncs. */
+  private cableSyncRunning = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -191,6 +198,22 @@ export class VendorService implements OnModuleInit {
       await this.persistSyncStatus();
     }
 
+    // The CABLE bouquet status is persisted the same way; recover a re-sync
+    // that was interrupted mid-flight so the admin UI reports the truth. Cable
+    // is NOT pre-warmed on boot (unlike DATA) — the bouquet list only changes
+    // when VTPass repackages, so the admin refreshes it on demand.
+    this.cableSyncStatus = await this.catalogSync.getSyncStatus(ServiceType.CABLE);
+    if (this.isStaleSync(this.cableSyncStatus)) {
+      this.cableSyncStatus = {
+        ...this.cableSyncStatus,
+        state: 'error',
+        finishedAt: new Date().toISOString(),
+        message:
+          'The previous CABLE bouquet re-sync was interrupted (server restarted mid-sync) — run Re-sync CABLE bouquets to complete it.',
+      };
+      await this.persistCableSyncStatus();
+    }
+
     // Pre-warm the combined DATA catalog (every configured data vendor) in the
     // background so the app never ships with an empty plan list on a cold start.
     if (
@@ -256,9 +279,9 @@ export class VendorService implements OnModuleInit {
   }
 
   /** True when a sync has been 'syncing' so long the process must have died. */
-  private isStaleSync(): boolean {
-    if (this.dataSyncStatus.state !== 'syncing') return false;
-    const startedAt = this.dataSyncStatus.startedAt;
+  private isStaleSync(status: CatalogSyncStatusShape = this.dataSyncStatus): boolean {
+    if (status.state !== 'syncing') return false;
+    const startedAt = status.startedAt;
     if (!startedAt) return false;
     const age = Date.now() - Date.parse(startedAt);
     return !Number.isNaN(age) && age > VendorService.SYNC_STALE_MS;
@@ -292,6 +315,134 @@ export class VendorService implements OnModuleInit {
     }
   }
 
+  /** Status as surfaced to the UI for the CABLE bouquet sync. */
+  private effectiveCableSyncStatus(): CatalogSyncStatusShape {
+    if (!this.isStaleSync(this.cableSyncStatus)) return { ...this.cableSyncStatus };
+    return {
+      ...this.cableSyncStatus,
+      state: 'error',
+      finishedAt: new Date().toISOString(),
+      message:
+        'The previous CABLE bouquet re-sync was interrupted (server restarted mid-sync) — run Re-sync CABLE bouquets to complete it.',
+    };
+  }
+
+  /** Write the in-memory CABLE status to Mongo (best-effort — advisory only). */
+  private async persistCableSyncStatus(): Promise<void> {
+    try {
+      await this.catalogSync.persistSyncStatus(
+        this.cableSyncStatus,
+        ServiceType.CABLE,
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `[catalog] could not persist CABLE sync status: ${String(err?.message ?? err)}`,
+      );
+    }
+  }
+
+  /** Request-path wait for the CABLE re-sync lock (see waitForSyncLock). */
+  private async waitForCableSync(): Promise<CatalogSyncStatusShape> {
+    const deadline = Date.now() + VendorService.SYNC_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, VendorService.SYNC_POLL_MS));
+      if (!this.cableSyncRunning) return this.effectiveCableSyncStatus();
+    }
+    this.logger.warn('[catalog] timed out waiting for the CABLE re-sync lock');
+    return this.effectiveCableSyncStatus();
+  }
+
+  /**
+   * Re-seed the CABLE bouquet catalogue from VTPass's live variation lists:
+   * each provider's listing is upserted keyed on its variation code and the
+   * bouquets VTPass no longer sells are pruned (see
+   * `CatalogSyncService.syncProviderPlans`). Plans are grouped per provider so
+   * a failure on one brand (e.g. StarTimes) never wipes the others.
+   */
+  private async syncCablePlans(): Promise<CatalogSyncStatusShape> {
+    if (this.cableSyncRunning) {
+      this.logger.log('[catalog] CABLE re-sync requested while one is running — waiting');
+      return this.waitForCableSync();
+    }
+
+    this.cableSyncRunning = true;
+    this.cableSyncStatus = {
+      state: 'syncing',
+      source: 'vtpass',
+      startedAt: new Date().toISOString(),
+    };
+    await this.persistCableSyncStatus();
+
+    const startedAt = this.cableSyncStatus.startedAt!;
+    const finish = async (
+      state: 'done' | 'error',
+      extra: Partial<CatalogSyncStatusShape> = {},
+    ) => {
+      this.cableSyncStatus = {
+        state,
+        source: 'vtpass',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        ...extra,
+      };
+      await this.persistCableSyncStatus();
+    };
+
+    try {
+      if (!this.vtpassProvider.isConfigured()) {
+        const message =
+          'VTPass is not configured — set VTPASS_API_KEY / VTPASS_PUBLIC_KEY to re-sync cable bouquets';
+        this.logger.warn(`[catalog] ${message}`);
+        await finish('error', { message });
+        return this.cableSyncStatus;
+      }
+
+      const rows = await this.vtpassProvider.fetchAllCablePlans();
+      // `fetchAllCablePlans` falls back to the bundled static seed when VTPass
+      // is unreachable, so a listing of only-`static` rows means "no live data".
+      // Never prune (or rewrite amounts) from that fallback.
+      if (rows.length === 0 || rows.every((row) => row.vendor === 'static')) {
+        await finish('error', {
+          message:
+            'VTPass returned no live cable variations — catalog left untouched (bundled seed kept as fallback)',
+        });
+        return this.cableSyncStatus;
+      }
+
+      const byProvider = new Map<string, CablePlanRow[]>();
+      for (const row of rows) {
+        const key = String(row.provider);
+        const list = byProvider.get(key) ?? [];
+        list.push(row);
+        byProvider.set(key, list);
+      }
+
+      let synced = 0;
+      let removed = 0;
+      for (const [provider, list] of byProvider) {
+        const res = await this.catalogSync.syncProviderPlans(
+          ServiceType.CABLE,
+          provider,
+          list,
+          { vendor: 'vtpass' },
+        );
+        synced += res.inserted + res.updated;
+        removed += res.removed;
+        this.logger.log(
+          `[catalog] CABLE ${provider}: ${res.inserted} inserted, ${res.updated} updated, ${res.removed} pruned`,
+        );
+      }
+      await finish('done', { synced, removed });
+    } catch (err: any) {
+      const message = `CABLE re-sync failed: ${String(err?.message ?? err)}`;
+      this.logger.warn(`[catalog] ${message}`);
+      await finish('error', { message });
+    } finally {
+      this.cableSyncRunning = false;
+    }
+    return this.cableSyncStatus;
+  }
+
   /**
    * Request-path wait for the DATA re-seed lock: another sync (this instance)
    * holds it, but a queued run is guaranteed once it frees. Poll until a terminal
@@ -319,6 +470,8 @@ export class VendorService implements OnModuleInit {
       configs: this.getEffectiveConfig(),
       dataCatalog: await this.catalogSync.countDataPlans(),
       dataSync: this.effectiveSyncStatus(),
+      cableCatalog: await this.catalogSync.countCablePlans(),
+      cableSync: this.effectiveCableSyncStatus(),
     };
   }
 
@@ -334,6 +487,24 @@ export class VendorService implements OnModuleInit {
     return {
       dataSync: this.effectiveSyncStatus(),
       dataCatalog: await this.catalogSync.countDataPlans(),
+    };
+  }
+
+  /**
+   * Trigger a re-sync of the CABLE bouquet catalogue from VTPass's live
+   * variation lists (DSTV / GOtv / StarTimes). Awaited for the same reason as
+   * `refreshDataSync`: the hosted serverless backend kills fire-and-forget work
+   * as soon as the request returns, and the status is persisted at every step.
+   */
+  async refreshCableSync(): Promise<{
+    cableSync: CatalogSyncStatusShape;
+    cableCatalog: CableCatalogInfo;
+  }> {
+    await this.refreshConfigIfStale();
+    await this.syncCablePlans();
+    return {
+      cableSync: this.effectiveCableSyncStatus(),
+      cableCatalog: await this.catalogSync.countCablePlans(),
     };
   }
 

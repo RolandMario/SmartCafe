@@ -149,6 +149,10 @@ export interface VendorOverview {
   dataCatalog: DataCatalogInfo;
   /** Status of the current/last DATA catalog re-seed. */
   dataSync: DataSyncStatus;
+  /** Active CABLE catalog broken down by provider (DStv / GOtv / StarTimes). */
+  cableCatalog: CableCatalogInfo;
+  /** Status of the current/last CABLE bouquet re-sync. */
+  cableSync: CableSyncStatus;
 }
 
 export interface VendorBalance {
@@ -175,6 +179,28 @@ export interface DataSyncStatus {
   synced?: number;
   removed?: number;
   message?: string;
+}
+
+/** Status of the most recent CABLE bouquet re-sync (VTPass live variations). */
+export interface CableSyncStatus {
+  state: "idle" | "syncing" | "done" | "error";
+  source?: "vtpass";
+  startedAt?: string;
+  finishedAt?: string;
+  synced?: number;
+  removed?: number;
+  message?: string;
+}
+
+/** Active CABLE catalog split by provider (DStv / GOtv / StarTimes). */
+export interface CableCatalogInfo {
+  total: number;
+  dstv: number;
+  gotv: number;
+  startimes: number;
+  /** Active bouquets under a provider key other than the three above. */
+  other: number;
+  source: "vtpass" | "static" | "mixed" | "empty";
 }
 
 export type PaymentProvider = "paystack";

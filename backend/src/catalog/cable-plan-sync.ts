@@ -43,7 +43,18 @@ export const CABLE_SERVICES: ReadonlyArray<{
  * standalone naira token — same cleanup rule the DATA plans already use.
  */
 export function cleanCablePlanName(raw: string): string {
-  return cleanDataPlanName(raw);
+  return (
+    cleanDataPlanName(raw)
+      // VTPass spells the brands inconsistently ("Dstv Select E36", "DSTV Box
+      // Office", "Gotv Easy") — normalise so the app always renders one brand.
+      .replace(/(?<![A-Za-z])dstv(?![A-Za-z])/gi, 'DStv')
+      .replace(/(?<![A-Za-z])gotv(?![A-Za-z])/gi, 'GOtv')
+      .replace(/(?<![A-Za-z])startimes(?![A-Za-z])/gi, 'StarTimes')
+      // "DStv StarterOTT" -> "DStv Starter OTT"
+      .replace(/(?<=[a-z])(?=OTT\b)/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+  );
 }
 
 /**
