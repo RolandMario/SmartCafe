@@ -66,7 +66,7 @@ MONGODB_URI=mongodb://localhost:27017/vtu?replicaSet=rs0
 ```bash
 cd backend
 npm install
-cp .env.example .env     # PORT=4000; VENDOR_PROVIDER=mock for local dev
+cp .env.example .env     # local template (git-ignored); PORT=4000, VENDOR_PROVIDER=mock
 npm run seed             # seeds 51 catalog products + admin + demo user
 npm run start:dev        # http://localhost:4000/api · Swagger: /api/docs
 ```
@@ -78,12 +78,52 @@ Seeded accounts:
 | Admin | `admin@vtuapp.com` | `Admin@12345` |
 | Demo user | `demo@vtuapp.com` | `Password@123` (wallet ₦50,000) |
 
+### Secrets & environment files
+
+**Every env file in this repo is git-ignored — including `.env.example`
+templates — so credentials never reach GitHub.** Create the files yourself
+(there is nothing to copy from the clone):
+
+| App | File to create | Required keys |
+|---|---|---|
+| backend | `backend/.env` | `PORT`, `CORS_ORIGINS`, `MONGODB_URI`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `VENDOR_PROVIDER`, plus the keys of the vendors/gateways you enable: `VTPASS_*`, `PAIRGATE_*`, `PEYFLEX_*`, `EBULK_*`, `PAYSTACK_*`, `SMTP_*`, `ADMIN_*`, `DEMO_*` |
+| admin | `admin/.env.local` | `NEXT_PUBLIC_API_URL` |
+| mobile | `mobile/.env` | `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_GROUP_CHAT_URL` |
+
+Ask the operator (or your password manager) for the values. Never `git add -f`
+an env file: anything committed stays in the repository history and must be
+treated as public, so a leaked key has to be rotated at the provider, not just
+deleted in a later commit.
+
+### Keeping the catalog in sync with VTPass
+
+The plan catalogue (DATA bundles and CABLE bouquets) is only as good as VTPass's
+live variation list — when a network repackages, the old variation codes start
+failing with *"product does not exist"*. Two ways to refresh it:
+
+- **Admin → Vendors → “Re-sync CABLE bouquets”** (`POST /api/admin/vendors/refresh-cable`):
+  re-reads `dstv` / `gotv` / `startimes` from VTPass, inserts new bouquets,
+  updates prices in place and prunes retired ones. Existing bouquets keep their
+  commission and show/hide setting, and Pairgate/Peyflex plans are never touched
+  (pruning is scoped to rows the VTPass sync owns — `vtpass`, `static`, or legacy
+  rows without a `vendor`).
+- **CLI** — dry run first (prints the insert / update / delete diff and writes nothing):
+  ```bash
+  cd backend
+  npm run sync:vtpass                                  # dry run: all DATA + CABLE providers
+  npm run sync:vtpass -- --apply                       # write the catalog
+  npm run sync:vtpass -- --apply --service=CABLE       # bouquets only
+  npm run sync:vtpass -- --apply --service=DATA --provider=GLO
+  ```
+  A second dry run reports `in sync` for every provider when the catalog matches
+  VTPass (the sync is idempotent).
+
 ### 3. Mobile app (Expo)
 
 ```bash
 cd mobile
 npm install
-cp .env.example .env     # defaults to the hosted backend (https://smart-cafe-bay.vercel.app/api)
+cp .env.example .env     # local template (git-ignored) → hosted backend URL
 npx expo start           # then press i / a / w
 ```
 
@@ -112,7 +152,7 @@ Note: to reach a backend running on the Mac from inside the emulator, **do not u
 ```bash
 cd admin
 npm install
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL defaults to the hosted backend
+cp .env.example .env.local   # local template (git-ignored) → hosted backend URL
 npm run dev              # http://localhost:3000  (login with admin@vtuapp.com)
 ```
 

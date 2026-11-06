@@ -1,6 +1,14 @@
 node_modules/
 dist/
+# --- Environment files — NEVER commit credentials -------------------------
+# `.env` and every variant (`.env.local`, `.env.production`, `.env.example`,
+# `.env.*.local`, `*.env`) is git-ignored in every directory, including
+# templates: a template that ships real keys is a leak. Committing one keeps
+# it in the repo history forever, so treat any committed env file as public.
 .env
+.env.*
+.env*.local
+*.env
 .expo/
 .expo-shared/
 *.log

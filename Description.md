@@ -24,11 +24,11 @@ SmartCafe consolidates all of these into **one wallet-first app**:
 ```bash
 cd backend
 npm install
-cp .env.example .env     # PORT=4000; sandbox vendor/gateway keys are pre-filled
+cp .env.example .env     # local template — env files are git-ignored (see README)
 npm run seed             # seeds 51 catalog products + admin + demo user
 npm run start:dev        # http://localhost:4000/api · Swagger docs: /api/docs
 ```
-For fully-local development with no external calls, set `VENDOR_PROVIDER=mock` in `backend/.env` — the bundled MockProvider simulates vendors with no keys required (see the comments in `.env.example`).
+For fully-local development with no external calls, set `VENDOR_PROVIDER=mock` in `backend/.env` — the bundled MockProvider simulates vendors with no keys required (see the comments in your local `backend/.env.example`).
 
 ### Seeded login credentials
 | Role | Email | Password |
@@ -40,7 +40,7 @@ For fully-local development with no external calls, set `VENDOR_PROVIDER=mock` i
 ```bash
 cd mobile
 npm install
-cp .env.example .env     # defaults to the hosted backend (https://smart-cafe-bay.vercel.app/api)
+cp .env.example .env     # local template (git-ignored) → hosted backend URL
 npx expo start           # then press i / a / w
 ```
 - To run against a local backend instead, set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:4000/api` in `mobile/.env` and restart `expo start`.
@@ -50,7 +50,7 @@ npx expo start           # then press i / a / w
 ```bash
 cd admin
 npm install
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL defaults to the hosted backend
+cp .env.example .env.local   # local template (git-ignored) → hosted backend URL
 npm run dev                  # http://localhost:3000  (login with admin@vtuapp.com / Admin@12345)
 ```
 Includes: dashboard (volume/commission by service), transaction management with vendor requery, user enable/disable, catalog CRUD, per-service vendor routing, and wallet-funding approvals.
@@ -93,5 +93,5 @@ SmartCafe operates as a **regulated digital-services reseller** in Nigeria. The 
 
 - All services are fulfilled through the operator's merchant accounts with **VTPass** (airtime/data/cable/electricity/WAEC/SMS) and **eBulkSMS** (bulk SMS). WAEC result-checker PINs and exam-registration serials are protected third-party material delivered exclusively through the VTPass authorised-merchant flow.
 - Wallet top-ups are processed by **Paystack** as a regulated Nigerian payment service provider, or by **Cashback Funding** (a manual bank transfer to the company account, verified by an admin before the wallet is credited).
-- The repository does **not** include proof of authorisation to resell these services. `backend/.env.example` ships with development/**sandbox**-style VTPass, eBulkSMS, and Paystack keys purely as a starting point, and its own comments recommend `VENDOR_PROVIDER=mock` (the bundled no-key simulator) for local development. Live credentials must be obtained by the operator under their own agreements with each provider and configured in `backend/.env` before any production use — the merchant agreements with VTPass, eBulkSMS, and Paystack are the documentation that demonstrates authorisation to offer these services.
-- The seeded demo account and the "hosted backend" `.env.example` configuration are for development/trial use; production deployments must supply their own credentials and comply with the terms of each provider and with Nigerian regulations applicable to the resale of telecommunication services, electricity bill payments, and educational examination materials.
+- The repository does **not** include proof of authorisation to resell these services, and it commits **no credentials**: every `.env*` file (templates included) is git-ignored, so VTPass, eBulkSMS, and Paystack keys are supplied by the operator in `backend/.env` (its comments recommend `VENDOR_PROVIDER=mock`, the bundled no-key simulator, for local development). Live credentials must be obtained by the operator under their own agreements with each provider before any production use — the merchant agreements with VTPass, eBulkSMS, and Paystack are the documentation that demonstrates authorisation to offer these services.
+- The seeded demo account and the hosted-backend API URL configured in `mobile/.env` are for development/trial use; production deployments must supply their own credentials and comply with the terms of each provider and with Nigerian regulations applicable to the resale of telecommunication services, electricity bill payments, and educational examination materials.
